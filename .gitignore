@@ -1,0 +1,26 @@
+# Ignore Python virtual environments (important to avoid huge files like libtorch_cpu.dylib)
+fikse-env/
+Model_1/venv/
+Model_2/venv/
+simple_Prototype/fikse-env/
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+
+# macOS system files
+.DS_Store
+.pkl
+.faiss
+.csv
+.ipynb_checkpoints/
+*.tsv
+*.zip
+*.env
+*.json
+*.pt
+*.pth
+*.bin
+*.safetensors
+runs/
+*.txt
