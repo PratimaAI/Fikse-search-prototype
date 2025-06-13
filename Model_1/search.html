@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FikseSearch Demo</title>
+</head>
+<body>
+  <h1>FikseSearch</h1>
+  <input type="text" id="queryInput" placeholder="Enter search query" />
+  <button onclick="performSearch()">Search</button>
+
+  <h2>Results:</h2>
+  <pre id="results"></pre>
+
+  <script>
+    async function performSearch() {
+      const query = document.getElementById("queryInput").value;
+      if (!query) {
+        alert("Please enter a search query.");
+        return;
+      }
+
+      try {
+        const response = await fetch(`http://127.0.0.1:8000/search?q=${encodeURIComponent(query)}`);
+        if (!response.ok) {
+          document.getElementById("results").textContent = `Error: ${response.status} ${response.statusText}`;
+          return;
+        }
+        const data = await response.json();
+        document.getElementById("results").textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById("results").textContent = `Fetch error: ${error.message}`;
+      }
+    }
+  </script>
+</body>
+</html>

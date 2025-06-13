@@ -10,9 +10,9 @@ __pycache__/
 
 # macOS system files
 .DS_Store
-.pkl
-.faiss
-.csv
+*.pkl
+*.faiss
+*.csv
 .ipynb_checkpoints/
 *.tsv
 *.zip
@@ -24,3 +24,27 @@ __pycache__/
 *.safetensors
 runs/
 *.txt
+
+##
+# Ignore Python virtual environments
+Model_1/venv/
+Model_1/fikse-env/
+Model_2/venv/
+
+# Ignore Jupyter Notebook checkpoints
+Model_2/.ipynb_checkpoints/
+
+# Ignore macOS system files
+.DS_Store
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+
+# Ignore data files you might not want tracked
+fikse_data.pkl
+fikse_index.faiss
+
+# Ignore log or temp files if any
+*.log
+*.tmp
