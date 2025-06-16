@@ -89,7 +89,7 @@
           <strong>Description:</strong> ${item["Description"] || "N/A"}<br/>
           <strong>Price:</strong> ${item["Price"] || "N/A"}<br/>
           <strong>Time:</strong> ${item["Estimated time in hours"] || "N/A"}<br/>
-          <span class="score">Score: ${item["boosted_score"]?.toFixed(3)}</span>
+          <span class="score">Score: ${item["similarity_score"]?.toFixed(2)}</span>
         `;
         container.appendChild(card);
       });
