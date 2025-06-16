@@ -37,6 +37,16 @@ model_checkpoint = "sentence-transformers/all-MiniLM-L6-v2"
 tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
 model = AutoModel.from_pretrained(model_checkpoint).to(device)
 
+import spacy
+
+# Load spaCy model once
+nlp = spacy.load("en_core_web_sm")
+
+def lemmatize_and_lower(text):
+    doc = nlp(text.lower())
+    return " ".join([token.lemma_ for token in doc])
+
+
 # === Helper functions (using imported functions) ===
 def embed_text(texts):
     """Get embeddings for search queries using the same functions as precompute_dataset.py"""
@@ -73,10 +83,12 @@ def search_api(q: str):
         return {"error": "Dataset not loaded. Please restart server."}
 
     corrected_query = correct_query(q)
+    normalized_query = lemmatize_and_lower(corrected_query)
+
     target_price = extract_price(corrected_query)
     
     # Get query embedding using the same functions as precompute_dataset.py
-    query_embedding = embed_text([corrected_query])[0]
+    query_embedding = embed_text([normalized_query])[0]
 
     scores, samples = dataset.get_nearest_examples(
         index_name="embeddings", query=query_embedding, k=20
@@ -87,15 +99,15 @@ def search_api(q: str):
 
     keyword = corrected_query.lower().strip()
     if len(keyword.split()) == 1:
-        boost_amount = 0.1
+        boost_amount = 1.0
         boosted_scores = []
         for i, text in enumerate(results["text"]):
+            text_lower = str(text).lower()
             score = results["similarity_score"].iloc[i]
-            if keyword in text.lower():
+            if keyword in text_lower:
                 score += boost_amount
             boosted_scores.append(score)
         results["boosted_score"] = boosted_scores
-        results = results.sort_values(by="boosted_score", ascending=False)
     else:
         results["boosted_score"] = results["similarity_score"]
 
@@ -107,8 +119,12 @@ def search_api(q: str):
                 return False
         results = results[results["Price"].apply(is_price_match)]
 
+    results = results.sort_values(by="boosted_score", ascending=False)
     results = results.head(10)
     return results.to_dict(orient="records")
+
+
+
 
 @app.on_event("startup")
 def startup_event():
