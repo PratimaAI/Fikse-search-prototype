@@ -1,24 +1,24 @@
 import unittest
 from fastapi.testclient import TestClient
-import app_copy  # Your app file with FastAPI app
+import app_trail_2  # Your app file with FastAPI app
 import re
 import numpy as np
 
 def convert_np_floats(obj):
+    if isinstance(obj, np.float32):
+        return float(obj)
     if isinstance(obj, dict):
         return {k: convert_np_floats(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_np_floats(v) for v in obj]
-    elif isinstance(obj, np.float32):
-        return float(obj)
+    if isinstance(obj, list):
+        return [convert_np_floats(i) for i in obj]
     return obj
 
 class TestSearchEngine(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.client = TestClient(app_copy.app)
-        if app_copy.dataset is None:
-            app_copy.load_and_index_dataset()
+        cls.client = TestClient(app_trail_2.app)
+        if app_trail_2.dataset is None:
+            app_trail_2.load_and_index_dataset()
 
     def test_search_endpoint(self):
         response = self.client.get("/search", params={"q": "shirt repair"})
@@ -52,21 +52,21 @@ class TestSearchEngine(unittest.TestCase):
 
     def test_correct_query_spell_correction(self):
         misspelled = "shrit repar"
-        corrected = app_copy.correct_query(misspelled)
+        corrected = app_trail_2.correct_query(misspelled)
         self.assertNotEqual(misspelled, corrected)
         self.assertTrue("shirt" in corrected.lower() or "repair" in corrected.lower())
 
     def test_lemmatize_and_lower(self):
         text = "Shirts are repaired"
-        normalized = app_copy.lemmatize_and_lower(text)
+        normalized = app_trail_2.lemmatize_and_lower(text)
         self.assertIsInstance(normalized, str)
         self.assertIn("shirt", normalized)
         self.assertIn("repair", normalized)
 
     def test_extract_price(self):
-        self.assertEqual(app_copy.extract_price("The price is 150 dollars"), 150)
-        self.assertEqual(app_copy.extract_price("Cost: 99"), 99)
-        self.assertIsNone(app_copy.extract_price("No price here"))
+        self.assertEqual(app_trail_2.extract_price("The price is 150 dollars"), 150)
+        self.assertEqual(app_trail_2.extract_price("Cost: 99"), 99)
+        self.assertIsNone(app_trail_2.extract_price("No price here"))
 
     def test_search_price_filter(self):
         query = "shirt repair 150"

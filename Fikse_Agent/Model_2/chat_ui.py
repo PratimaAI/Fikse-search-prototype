@@ -7,8 +7,7 @@ import json
 from typing import Dict, List, Optional
 
 st.set_page_config(
-    page_title="FikseAgent - AI Tailor Assistant", 
-    page_icon="🧵",
+    page_title="FikseAgent", 
     layout="wide"
 )
 
@@ -46,8 +45,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Title and description
-st.title("🧵 FikseAgent")
-st.markdown("*Streamline your repair order creation with AI assistance*")
+st.title("FikseAgent")
+st.markdown("*AI assistance*")
 
 # Initialize session state
 if "session_id" not in st.session_state:
@@ -66,7 +65,7 @@ if "pending_order" not in st.session_state:
 # Function to send message to agent
 def send_agent_message(message: str):
     try:
-        with st.spinner("🤔 Thinking..."):
+        with st.spinner("Thinking..."):
             response = requests.post("http://localhost:8001/agent", json={
                 "session_id": st.session_state.session_id,
                 "user_input": message
@@ -78,10 +77,10 @@ def send_agent_message(message: str):
             st.error(f"API Error: {response.status_code} - {response.text}")
             return None
     except requests.exceptions.ConnectionError:
-        st.error("❌ **Connection Error**: Make sure the agent service is running on port 8001")
+        st.error("**Connection Error**: Make sure the agent service is running on port 8001")
         return None
     except Exception as e:
-        st.error(f"❌ **Error**: {str(e)}")
+        st.error(f"**Error**: {str(e)}")
         return None
 
 # Function to handle service selection
@@ -131,10 +130,10 @@ def handle_order_action(action):
 # Sidebar with session info and controls
 with st.sidebar:
     st.header("Session Info")
-    st.write(f"**Session ID:** `{st.session_state.session_id[:8]}...`")
+    st.write(f"**Session ID:** `{st.session_state.session_id[:4]}...`")
     st.write(f"**State:** {st.session_state.conversation_state}")
     
-    if st.button("🔄 Reset Session"):
+    if st.button("Reset Session"):
         try:
             response = requests.delete(f"http://localhost:8001/agent/session/{st.session_state.session_id}")
             st.session_state.chat_history = []
@@ -161,7 +160,7 @@ with st.sidebar:
         st.write(f"**Total: ${total_price:.0f}**")
 
 # Main chat interface
-st.header("💬 Chat with FikseAgent")
+st.header("💬 Chat")
 
 # Display chat history
 for message in st.session_state.chat_history:
@@ -184,7 +183,7 @@ for message in st.session_state.chat_history:
             st.subheader("Selected Services:")
             total = sum(service['price'] for service in message["selected_services"])
             for service in message["selected_services"]:
-                st.markdown(f"✅ **{service['service']}** - ${service['price']:.0f}")
+                st.markdown(f"**{service['service']}** - ${service['price']:.0f}")
             st.markdown(f"**Subtotal: ${total:.0f}**")
         
         # Display order summary if included
@@ -202,7 +201,7 @@ for message in st.session_state.chat_history:
         # Display created order if included
         if message.get("order_created"):
             order = message["order_created"]
-            st.markdown("### 🎉 Order Created!")
+            st.markdown("### Order Created!")
             st.markdown(f"**Order ID:** `{order['order_id']}`")
             st.markdown(f"**Created:** {order['created_at']}")
             st.markdown(f"**Total Price:** ${order['total_price']:.0f}")
@@ -217,7 +216,7 @@ for message in st.session_state.chat_history:
             
             # Option to download order as JSON
             st.download_button(
-                label="📥 Download Order Details",
+                label="Download Order Details",
                 data=json.dumps(order, indent=2),
                 file_name=f"order_{order['order_id']}.json",
                 mime="application/json"
@@ -225,7 +224,7 @@ for message in st.session_state.chat_history:
 
 # Service selection section (appears when in selecting state)
 if st.session_state.conversation_state == "selecting" and st.session_state.current_services:
-    st.subheader("🛠️ Available Services - Click to Select:")
+    st.subheader("Available Services - Click to Select:")
     
     # Display service buttons
     for i, service in enumerate(st.session_state.current_services):
@@ -241,14 +240,14 @@ if st.session_state.conversation_state == "selecting" and st.session_state.curre
 
 # Order confirmation section (appears when in confirming state)
 if st.session_state.conversation_state == "confirming" and st.session_state.pending_order:
-    st.subheader("📋 Order Confirmation")
+    st.subheader("Order Confirmation")
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("✅ Confirm Order", key="confirm_order_main", type="primary"):
+        if st.button("Confirm Order", key="confirm_order_main", type="primary"):
             handle_order_action("Yes")
     with col2:
-        if st.button("❌ Cancel Order", key="cancel_order_main"):
+        if st.button("Cancel Order", key="cancel_order_main"):
             handle_order_action("Cancel")
 
 # Manual service addition section (appears when in manual_addition state)
@@ -257,15 +256,15 @@ if st.session_state.conversation_state == "manual_addition":
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("➕ Add More Services", key="add_more_services", type="primary"):
+        if st.button("Add More Services", key="add_more_services", type="primary"):
             handle_order_action("Yes")
     with col2:
-        if st.button("➡️ Proceed to Order", key="proceed_to_order"):
+        if st.button("Proceed to Order", key="proceed_to_order"):
             handle_order_action("No")
 
-# User input (only show when not in selection states)
-if st.session_state.conversation_state not in ["selecting", "confirming", "manual_addition"]:
-    user_input = st.chat_input("Describe the garment and the issue...")
+# User input (always shown)
+if st.session_state.conversation_state not in ["confirming"]:
+    user_input = st.chat_input("Describe the issue...")
     
     # Process user input
     if user_input:
@@ -299,12 +298,12 @@ if st.session_state.conversation_state not in ["selecting", "confirming", "manua
 
 # Status indicator
 if st.session_state.conversation_state == "greeting":
-    st.info("👋 Ready to help! Describe what needs repair.")
+    st.info("Hi, Describe what needs repair.")
 elif st.session_state.conversation_state == "selecting":
-    st.info("🛠️ Select a service from the options above.")
+    st.info("Select a service from the options.")
 elif st.session_state.conversation_state == "manual_addition":
-    st.info("🔧 Would you like to add more services or proceed with your order?")
+    st.info("Would you like to add more services or proceed with your order?")
 elif st.session_state.conversation_state == "confirming":
-    st.info("✅ Review your order above and click confirm to proceed.")
+    st.info("Review your order and click confirm to proceed.")
 elif st.session_state.conversation_state == "completed":
-    st.success("🎉 Order created successfully! Start a new conversation for another order.")
+    st.success(" Order created successfully! Start a new conversation for another order.")

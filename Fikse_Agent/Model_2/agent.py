@@ -1,4 +1,8 @@
-# agent_api.py
+# This is the simple agent, everything is hardcoded here . And it uses search module. 
+# No LLM is used here 
+
+
+# agent.py
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel

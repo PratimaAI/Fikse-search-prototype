@@ -1,3 +1,6 @@
+# This is the hybrid agent, it uses LLM(ollama model) for AI fallback intent detection and response generation. 
+# It also uses the search module. 
+
 # agent_hybrid.py
 
 from fastapi import FastAPI, HTTPException
@@ -42,7 +45,7 @@ class OrderSummary(BaseModel):
 def detect_intent_and_context(text: str) -> Dict:
     """Enhanced intent detection with AI fallback for unknown intents"""
     text_lower = text.lower()
-    print(f"🔍 Intent detection for: '{text}'")
+    print(f"Intent detection for: '{text}'")
     
     # Extract context first (always useful)
     context = {
@@ -58,7 +61,7 @@ def detect_intent_and_context(text: str) -> Dict:
     for garment in garments:
         if garment in text_lower:
             context["garment_type"] = garment
-            print(f"👗 Found garment: {garment}")
+            print(f"Found garment: {garment}")
             break
     
     # Detect fabric types
@@ -67,7 +70,7 @@ def detect_intent_and_context(text: str) -> Dict:
     for fabric in fabrics:
         if fabric in text_lower:
             context["fabric_type"] = fabric
-            print(f"🧵 Found fabric: {fabric}")
+            print(f"Found fabric: {fabric}")
             if context["garment_type"]:
                 context["garment_type"] = f"{fabric} {context['garment_type']}"
             break
@@ -79,33 +82,33 @@ def detect_intent_and_context(text: str) -> Dict:
     for damage in damage_types:
         if damage in text_lower:
             context["damage_type"] = damage
-            print(f"💔 Found damage: {damage}")
+            print(f"Found damage: {damage}")
             break
     
     # Simple intent patterns first
     if re.match(r"^[0-9]+$", text.strip()):
-        print("🔢 Matched number pattern")
+        print("Matched number pattern")
         return {"intent": "service_selection", "context": context}
     elif re.search(r'\b(yes|confirm|okay|ok)\b|looks good', text_lower):
-        print("✅ Matched confirmation pattern")
+        print("Matched confirmation pattern")
         return {"intent": "confirmation", "context": context}
     elif re.search(r'\b(no|cancel|nevermind|back)\b', text_lower):
-        print("❌ Matched cancel pattern")
+        print("Matched cancel pattern")
         return {"intent": "cancel", "context": context}
     elif re.search(r'\b(hi|hello|hey|start|begin)\b', text_lower):
         match = re.search(r'\b(hi|hello|hey|start|begin)\b', text_lower)
         matching_phrase = match.group(1) if match else "unknown"
-        print(f"👋 Matched greeting pattern: '{matching_phrase}' as whole word")
+        print(f"Matched greeting pattern: '{matching_phrase}' as whole word")
         return {"intent": "greeting", "context": context}
     
     # If we found garment/fabric/damage context, likely a repair request
-    print(f"📋 Context extracted: {context}")
+    print(f"Context extracted: {context}")
     if context["garment_type"] or context["fabric_type"] or context["damage_type"]:
-        print("✅ Detected repair_request from context")
+        print("Detected repair_request from context")
         return {"intent": "repair_request", "context": context}
     
     # For everything else, use AI to classify intent
-    print("🤖 Using AI to classify intent")
+    print("Using AI to classify intent")
     return ai_classify_intent(text, context)
 
 def ai_classify_intent(text: str, context: Dict) -> Dict:
@@ -131,15 +134,15 @@ Respond with ONLY the intent name, nothing else."""
         })
         
         ai_intent = response.json()["response"].strip().lower()
-        print(f"🤖 AI classified intent as: '{ai_intent}'")
+        print(f"AI classified intent as: '{ai_intent}'")
         
         # Validate AI response
         valid_intents = ["repair_request", "greeting", "service_selection", "confirmation", "unknown"]
         if ai_intent in valid_intents:
-            print(f"✅ Valid AI intent: {ai_intent}")
+            print(f"Valid AI intent: {ai_intent}")
             return {"intent": ai_intent, "context": context}
         else:
-            print(f"❌ Invalid AI intent: {ai_intent}, using fallback")
+            print(f"Invalid AI intent: {ai_intent}, using fallback")
             # Fallback: if AI response is invalid, assume repair request if any context found
             if context["garment_type"] or context["fabric_type"] or context["damage_type"]:
                 return {"intent": "repair_request", "context": context}
@@ -255,11 +258,11 @@ def get_session(session_id: str) -> SessionState:
 def query_fikse_search(query: str) -> List[ServiceItem]:
     """Query the search service for repair services"""
     try:
-        print(f"🔍 Searching for: {query}")
+        print(f"Searching for: {query}")
         response = requests.get("http://localhost:8000/search", params={"q": query})
         response.raise_for_status()
         results = response.json()
-        print(f"📋 Found {len(results)} raw results")
+        print(f"Found {len(results)} raw results")
         
         services = []
         for i, result in enumerate(results[:10]):
@@ -274,10 +277,10 @@ def query_fikse_search(query: str) -> List[ServiceItem]:
             )
             services.append(service_item)
         
-        print(f"✅ Returning {len(services)} formatted services")
+        print(f"Returning {len(services)} formatted services")
         return services
     except Exception as e:
-        print(f"❌ Search error: {str(e)}")
+        print(f"Search error: {str(e)}")
         return []
 
 ### -------------------------------
@@ -291,13 +294,13 @@ def hybrid_agent(input: AgentInput):
     """Hybrid agent that combines intent detection with AI generation"""
     try:
         session = get_session(input.session_id)
-        print(f"📊 Session state: conversation_state={session.conversation_state}, suggested_services={len(session.suggested_services)}, selected_services={len(session.selected_services)}")
+        print(f"Session state: conversation_state={session.conversation_state}, suggested_services={len(session.suggested_services)}, selected_services={len(session.selected_services)}")
         
         # Detect intent and context
         intent_data = detect_intent_and_context(input.user_input)
         intent = intent_data["intent"]
         context = intent_data["context"]
-        print(f"🎯 Final intent: {intent}, context: {context}")
+        print(f"Final intent: {intent}, context: {context}")
         
         # Update session context
         session.context.update(context)
@@ -346,14 +349,14 @@ def hybrid_agent(input: AgentInput):
         
         # Handle service selection
         elif intent == "service_selection":
-            print(f"🔢 Service selection: user input = '{input.user_input}'")
-            print(f"📋 Available services: {len(session.suggested_services)}")
+            print(f"Service selection: user input = '{input.user_input}'")
+            print(f"Available services: {len(session.suggested_services)}")
             
             if session.suggested_services:
                 try:
                     # Parse service selection (expecting numbers like "1", "2", etc.)
                     selection_number = int(input.user_input.strip())
-                    print(f"🎯 Parsed selection: {selection_number}")
+                    print(f"Parsed selection: {selection_number}")
                     
                     if 1 <= selection_number <= len(session.suggested_services):
                         selected_service = session.suggested_services[selection_number - 1]
@@ -370,11 +373,11 @@ def hybrid_agent(input: AgentInput):
                         )
                         session.pending_order = order_preview
                         
-                        print(f"✅ Selected service: {selected_service.service} - ${selected_service.price}")
-                        print(f"🔄 Updated conversation_state to: {session.conversation_state}")
-                        print(f"📋 Created order preview for UI")
+                        print(f"Selected service: {selected_service.service} - ${selected_service.price}")
+                        print(f"Updated conversation_state to: {session.conversation_state}")
+                        print(f"Created order preview for UI")
                         
-                        response_text = f"Great choice! You've selected:\n\n**{selected_service.service}** - ${selected_service.price:.0f}\n{selected_service.description}\n\n**Click the confirmation buttons below or type 'yes' to confirm.**"
+                        response_text = f"You've selected:\n\n**{selected_service.service}** - ${selected_service.price:.0f}\n{selected_service.description}\n\n**Click the confirmation buttons below to confirm.**"
                         
                         return {
                             "intent": intent,
@@ -386,14 +389,14 @@ def hybrid_agent(input: AgentInput):
                             "context": context
                         }
                     else:
-                        print(f"❌ Invalid selection: {selection_number} not in range 1-{len(session.suggested_services)}")
+                        print(f"Invalid selection: {selection_number} not in range 1-{len(session.suggested_services)}")
                 except (ValueError, IndexError) as e:
-                    print(f"❌ Parse error: {e}")
+                    print(f"Parse error: {e}")
             else:
-                print("❌ No suggested services in session")
+                print("No suggested services in session")
             
             # Fallback if selection fails
-            print("⚠️ Service selection failed - using fallback response")
+            print("Service selection failed - using fallback response")
             response_text = ai_generator.generate_response("unknown", context, input.user_input)
             return {
                 "intent": "unknown",
@@ -409,7 +412,7 @@ def hybrid_agent(input: AgentInput):
             if session.selected_services:
                 # Create final order with real ID and timestamp
                 final_order = OrderSummary(
-                    order_id=f"ORD-{uuid.uuid4().hex[:8].upper()}",
+                    order_id=f"ORD-{uuid.uuid4().hex[:2].upper()}",
                     services=session.selected_services,
                     total_price=sum(s.price for s in session.selected_services),
                     estimated_total_hours=sum(s.estimated_hours for s in session.selected_services if s.estimated_hours),
@@ -418,9 +421,9 @@ def hybrid_agent(input: AgentInput):
                 session.pending_order = final_order
                 session.conversation_state = "completed"
                 
-                print(f"🎉 Order confirmed! ID: {final_order.order_id}")
+                print(f"Order confirmed! ID: {final_order.order_id}")
                 
-                response_text = f"🎉 **Order Created Successfully!**\n\n**Order ID:** {final_order.order_id}\n**Service:** {session.selected_services[0].service}\n**Price:** ${final_order.total_price:.0f}\n**Created:** {final_order.created_at}\n\nYour repair order is ready for processing! Is there anything else I can help you with?"
+                response_text = f"**Order Created Successfully!**\n\n**Order ID:** {final_order.order_id}\n**Service:** {session.selected_services[0].service}\n**Price:** ${final_order.total_price:.0f}\n**Created:** {final_order.created_at}\n\nYour repair order is ready for processing! Is there anything else I can help you with?"
                 
                 return {
                     "intent": intent,
@@ -438,7 +441,7 @@ def hybrid_agent(input: AgentInput):
                 session.conversation_state = "selecting"
                 session.selected_services = []
                 session.pending_order = None  # Clear the order preview
-                print("❌ Order cancelled, reset to selecting state")
+                print("Order cancelled, reset to selecting state")
                 response_text = "Order cancelled. Please select a different service by typing its number (1, 2, 3, etc.):"
                 
                 return {
