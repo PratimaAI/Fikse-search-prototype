@@ -1,5 +1,6 @@
-# This is the hybrid agent, it uses LLM(ollama model) for AI fallback intent detection and response generation. 
+# This is the hybrid agent, it uses LLM(ollama model) for AI fallback intent detection and AI response generation. 
 # It also uses the search module. 
+# It produces 5 services and user select the service.
 
 # agent_hybrid.py
 

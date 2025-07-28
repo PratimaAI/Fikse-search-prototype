@@ -1,8 +1,9 @@
 # This is the modification of hybrid agent, it uses LLM(ollama model) for AI fallback intent detection and response generation. 
 # It also uses the search module. 
-# This add the comment section after order creation using LLM.
+# Addition:(1) This code adds the comment section after order creation using LLM based on the Prompt file.
+#(2) This code add a new function select_services which generates the single best service based on user input. 
 
-# agent_hybrid.py
+# agent_hybrid_Mod.py
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -12,6 +13,8 @@ from typing import List, Dict, Optional
 import uuid
 from datetime import datetime
 import json
+import re
+import threading
 
 app = FastAPI()
 
@@ -31,6 +34,7 @@ class ServiceItem(BaseModel):
     garment_type: str
     repairer_type: str
     estimated_hours: Optional[float] = None
+    category: Optional[str] = None  # Type of category
 
 class OrderSummary(BaseModel):
     order_id: str
@@ -230,6 +234,50 @@ Keep it short and direct."""
         except Exception as e:
             return f"I apologize, but I'm having trouble generating a response right now. Please describe what clothing item needs repair and I'll do my best to help!"
 
+   
+
+    def select_services_with_llm(self, user_input: str, services: List[ServiceItem]) -> List[ServiceItem]:
+        service_options = "\n".join(
+            [
+                f"{i+1}. {s.repairer_type} | {s.category} | {s.garment_type} | {s.service} | {s.description} | {s.price}"
+                for i, s in enumerate(services)
+            ]
+        )
+
+        prompt = f"""
+You are an expert clothing repair assistant. A user has requested the following:
+
+User: \"{user_input}\"
+
+Here are 10 available services (each row shows: Type of Repairer | Type of category | Type of garment in category | Service | Description | Price):
+
+{service_options}
+
+Please choose the single most relevant service for this request. Respond only with the number. Example: 4
+Only select from the numbers shown above. Do not invent new options or numbers.
+"""
+
+        try:
+            response = self._call_ollama(prompt).strip()
+            print(f"LLM raw response: {response}")
+
+            # Extract numbers from the response
+            indices = [int(i) - 1 for i in re.findall(r"\b\d+\b", response)]
+            selected = [services[i] for i in indices if 0 <= i < len(services)]
+            
+            # Fallback if nothing was selected
+            if not selected:
+                print("No valid services extracted from LLM response.")
+                return services[:1]
+
+            # Only return the first valid selection
+            return selected[:1]
+        except Exception as e:
+            print(f"LLM service selection failed: {e}")
+            return services[:1]  # fallback to first if LLM fails
+
+
+
 ### -------------------------------
 ### 4. Session Management
 ### -------------------------------
@@ -274,7 +322,8 @@ def query_fikse_search(query: str) -> List[ServiceItem]:
                 price=float(result.get("Price", 0)),
                 garment_type=result.get("Type of garment in category", ""),
                 repairer_type=result.get("Type of Repairer", ""),
-                estimated_hours=result.get("Estimated time in hours")
+                estimated_hours=result.get("Estimated time in hours"),
+                category=result.get("Type of category", "")
             )
             services.append(service_item)
         
@@ -289,6 +338,43 @@ def query_fikse_search(query: str) -> List[ServiceItem]:
 ### -------------------------------
 
 ai_generator = AIResponseGenerator()
+
+# Utility to load and cache the TONE_GUIDELINE from the Prompt file
+def get_tone_guideline(prompt_path="Prompt"):
+    if not hasattr(get_tone_guideline, "_cache"):
+        get_tone_guideline._cache = None
+        get_tone_guideline._lock = threading.Lock()
+    if get_tone_guideline._cache is None:
+        with get_tone_guideline._lock:
+            if get_tone_guideline._cache is None:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                # Extract the TONE_GUIDELINE string if present
+                if "TONE_GUIDELINE" in content:
+                    local_vars = {}
+                    exec(content, {}, local_vars)
+                    get_tone_guideline._cache = local_vars.get("TONE_GUIDELINE", content)
+                else:
+                    get_tone_guideline._cache = content
+    return get_tone_guideline._cache
+
+def generate_order_comment(user_prompt: str, selected_services: list, ai_generator) -> str:
+    TONE_GUIDELINE = get_tone_guideline()  # Cached, loaded once
+    selected_services_text = ", ".join([s.description or s.service for s in selected_services])
+    comment_prompt = (
+        f"{TONE_GUIDELINE.strip()}\n\n"
+        f"User: \"{user_prompt}\"\n"
+        f"Selected service(s) descriptions: \"{selected_services_text}\"\n\n"
+        f"Comment:"
+    )
+    try:
+        llm_response = ai_generator._call_ollama(comment_prompt).strip()
+        comment = llm_response.split('.')[0].strip()
+        if 'no additional instructions' in comment.lower():
+            return 'No additional instructions.'
+        return ' '.join(comment.split()[:5])
+    except Exception:
+        return "No additional instructions."
 
 @app.post("/agent")
 def hybrid_agent(input: AgentInput):
@@ -314,112 +400,78 @@ def hybrid_agent(input: AgentInput):
             "context": context
         })
         
-        # Handle repair requests
+        # Handle repair requests (auto-selection only)
         if intent == "repair_request":
-            # Search for services
             services = query_fikse_search(input.user_input)
-            session.suggested_services = services[:5]
-            session.conversation_state = "selecting" if services else "searching"
+            candidate_services = services[:10]
+            session.suggested_services = candidate_services
             session.current_query = input.user_input
-            
-            # 🔹 Extract and show the garment category if available
-            if services:
-                first_category = services[0].garment_type
-                print(f"type of Garment in category: {first_category}")
-                garment_category_note = f"Category: **{first_category}**\n\n"
-            else:
-                garment_category_note = ""
 
-            # Generate direct response
             if services:
-                # Fix garment_info formatting to avoid duplicates
-                fabric = context.get('fabric_type', '')
-                garment = context.get('garment_type', 'garment')
-                if fabric and garment and fabric in garment:
-                    garment_info = garment  # Already contains fabric
-                elif fabric and garment:
-                    garment_info = f"{fabric} {garment}"
-                else:
-                    garment_info = garment or fabric or "garment"
-                
-                response_text = garment_category_note + f"Found {len(session.suggested_services)} matching repair services for your {garment_info}. Here are your options:"
+                # Auto-select 1 or 2 best services using LLM
+                selected_services = ai_generator.select_services_with_llm(input.user_input, session.suggested_services)
+                session.selected_services = selected_services
+                session.conversation_state = "confirming"
+
+                # Print selected services for debugging
+                print("Selected services:")
+                for s in selected_services:
+                    print(f"- {s.garment_type}: {s.service} (${s.price}) | {s.description}")
+
+                # Create order summary preview for confirmation
+                total_price = sum(s.price for s in selected_services)
+                total_hours = sum(s.estimated_hours for s in selected_services if s.estimated_hours)
+                order_preview = OrderSummary(
+                    order_id="PREVIEW",
+                    services=selected_services,
+                    total_price=total_price,
+                    estimated_total_hours=total_hours,
+                    created_at=""
+                )
+                session.pending_order = order_preview
+
+                # Generate comment only in auto-selection flow
+                order_comment = generate_order_comment(session.current_query or "", selected_services, ai_generator)
+                print("Generated comment:", order_comment)  # For debugging
+                order_dict = order_preview.dict()
+                order_dict['comment'] = order_comment
+
+                # Show garment type per service in the preview
+                service_lines = [
+                    f"Type of category: {s.category}\nType of garment in category: {s.garment_type}\nService: {s.service}\nPrice: ${s.price:.0f}\n"
+                    for s in selected_services
+                ]
+                response_text = (
+                    f"**Order Preview**\n\n"
+                    f"\n".join(service_lines) + "\n"
+                    f"**Total Price:** ${total_price:.0f}\n"
+                    f"**Comment:** {order_comment}\n\n"
+                    f"Please confirm to proceed with your repair order."
+                )
+                return {
+                    "intent": intent,
+                    "response": response_text,
+                    "conversation_state": "confirming",
+                    "show_services": False,
+                    "selected_services": [s.dict() for s in selected_services],
+                    "order_summary": order_dict,
+                    "context": context
+                }
             else:
                 garment_info = context.get('garment_type', 'item')
                 response_text = f"I couldn't find services for your {garment_info}. Could you describe the damage in more detail?"
-            
-            return {
-                "intent": intent,
-                "response": response_text,
-                "conversation_state": session.conversation_state,
-                "show_services": len(services) > 0,
-                "services": [s.dict() for s in session.suggested_services],
-                "context": context
-            }
-        
-        # Handle service selection
-        elif intent == "service_selection":
-            print(f"Service selection: user input = '{input.user_input}'")
-            print(f"Available services: {len(session.suggested_services)}")
-            
-            if session.suggested_services:
-                try:
-                    # Parse service selection (expecting numbers like "1", "2", etc.)
-                    selection_number = int(input.user_input.strip())
-                    print(f"Parsed selection: {selection_number}")
-                    
-                    if 1 <= selection_number <= len(session.suggested_services):
-                        selected_service = session.suggested_services[selection_number - 1]
-                        session.selected_services = [selected_service]
-                        session.conversation_state = "confirming"
-                        
-                        # Create order summary preview for confirmation
-                        order_preview = OrderSummary(
-                            order_id="PREVIEW",  # Temporary ID
-                            services=[selected_service],
-                            total_price=selected_service.price,
-                            estimated_total_hours=selected_service.estimated_hours,
-                            created_at=""  # Will be set when actually confirmed
-                        )
-                        session.pending_order = order_preview
-                        
-                        print(f"Selected service: {selected_service.service} - ${selected_service.price}")
-                        print(f"Updated conversation_state to: {session.conversation_state}")
-                        print(f"Created order preview for UI")
-                        
-                        response_text = f"You've selected:\n\n**{selected_service.service}** - ${selected_service.price:.0f}\n{selected_service.description}\n\n**Click the confirmation buttons below to confirm.**"
-                        
-                        return {
-                            "intent": intent,
-                            "response": response_text,
-                            "conversation_state": "confirming",
-                            "show_services": False,
-                            "selected_services": [selected_service.dict()],
-                            "order_summary": order_preview.dict(),  # This is what the UI needs!
-                            "context": context
-                        }
-                    else:
-                        print(f"Invalid selection: {selection_number} not in range 1-{len(session.suggested_services)}")
-                except (ValueError, IndexError) as e:
-                    print(f"Parse error: {e}")
-            else:
-                print("No suggested services in session")
-            
-            # Fallback if selection fails
-            print("Service selection failed - using fallback response")
-            response_text = ai_generator.generate_response("unknown", context, input.user_input)
-            return {
-                "intent": "unknown",
-                "response": response_text,
-                "conversation_state": session.conversation_state,
-                "show_services": len(session.suggested_services) > 0,
-                "services": [s.dict() for s in session.suggested_services],
-                "context": context
-            }
+                return {
+                    "intent": intent,
+                    "response": response_text,
+                    "conversation_state": "searching",
+                    "show_services": False,
+                    "services": [],
+                    "context": context
+                }
         
         # Handle confirmation
         elif intent == "confirmation" and session.conversation_state == "confirming":
             if session.selected_services:
-                # Create final order with real ID and timestamp
                 final_order = OrderSummary(
                     order_id=f"ORD-{uuid.uuid4().hex[:2].upper()}",
                     services=session.selected_services,
@@ -429,64 +481,11 @@ def hybrid_agent(input: AgentInput):
                 )
                 session.pending_order = final_order
                 session.conversation_state = "completed"
-                
-                # Prepare prompt for comment generation
-                TONE_GUIDELINE = """
-                You are a user-friendly, solution-oriented, and modern AI assistant designed for tailors and garment repair professionals who are often short on time.
 
-                Your voice reflects the following values:
-                - Friendly: Speak like a helpful human — never like bureaucracy or a robot.
-                - Efficient: Get to the point, with no unnecessary filler.
-                - Practical: Use examples and language that reflect the daily life of someone doing clothing repairs.
-                - Trustworthy: Be confident and clear, but never condescending.
-
-                Task:
-                Write a short, human-sounding comment that summarizes the user’s repair request and the selected service. Avoid adding extra details. Do not explain the service or speculate about pricing.
-                Example 1:
-                User: "Red jacket with hole"
-
-                Category: Jacket
-                Selected service: "Hole - $299"
-                Comment: "Red jacket with hole inside one pocket, hole in filling, loose seam on the right arm, and the zipper is broken towards the top."
-
-                Example 2:
-
-                User: "Help me fix the zipper on my jeans"
-
-                Category: Bottom
-                Selected service: "Replace zipper - $149"
-                Comment: "User asked for zipper repair — selected 'Replace zipper' for $149."
-                """
-
-                user_prompt = session.current_query or ""
-                selected_service = session.selected_services[0]
-                service_description = selected_service.description or selected_service.service
-
-                comment_prompt = (
-                    f"{TONE_GUIDELINE.strip()}\n\n"
-                    f"User: \"{user_prompt}\"\n"
-                    f"Selected service: \"{service_description}\"\n\n"
-                    f"Comment:"
-                )
-
-                # Call your LLM (reuse your AIResponseGenerator or make a new call)
-                try:
-                    # You can add a new method in AIResponseGenerator for comments or reuse _call_ollama here:
-                    llm_response = ai_generator._call_ollama(comment_prompt)
-                    order_comment = llm_response.strip()
-                except Exception:
-                    order_comment = f"Order for '{service_description}' based on user request."
-
-                # Save the comment inside the order (add a new attribute or store separately)
-                # For now, let's just add a 'comment' field dynamically (or extend OrderSummary if you want)
                 order_dict = final_order.dict()
-                order_dict['comment'] = order_comment
+                # Do not generate or attach a comment here
 
-
-                print(f"Order confirmed! ID: {final_order.order_id}")
-                print(f"Order Comment: {order_comment}")
                 response_text = f"**Order Created Successfully!**\n\n**Order ID:** {final_order.order_id}\n**Service:** {session.selected_services[0].service}\n**Price:** ${final_order.total_price:.0f}\n**Created:** {final_order.created_at}\n\nYour repair order is ready for processing! Is there anything else I can help you with?"
-                
                 return {
                     "intent": intent,
                     "response": response_text,
