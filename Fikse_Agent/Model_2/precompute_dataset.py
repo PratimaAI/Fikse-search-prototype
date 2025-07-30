@@ -3,6 +3,7 @@ from datasets import Dataset
 from transformers import AutoTokenizer, AutoModel
 import torch
 import spacy
+import math
 
 # Load spaCy model for lemmatization
 nlp = spacy.load("en_core_web_sm")
@@ -53,13 +54,39 @@ def embed_batch(batch, tokenizer, model, device):
     embeddings_np = embeddings_tensor.detach().cpu().numpy()
     return {"embeddings": embeddings_np}
 
+# Added: Clean invalid float values from embeddings (NaN, inf)
+def sanitize_floats(obj):
+    if isinstance(obj, dict):
+        return {k: sanitize_floats(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_floats(v) for v in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return 0.0
+        else:
+            return obj
+    else:
+        return obj
+
 def main():
     device = torch.device("cpu")
     model_checkpoint = "sentence-transformers/all-MiniLM-L6-v2"
     tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
     model = AutoModel.from_pretrained(model_checkpoint).to(device)
 
-    df = pd.read_csv("Dataset_categories.csv")
+    # Load and clean the dataset
+    df = pd.read_csv("Dataset_agent_new.csv", delimiter=";")
+    
+    # Clean missing values and ensure proper data types
+    df = df.fillna("")  # Replace NaN with empty string for text columns
+    df["Price"] = pd.to_numeric(df["Price"], errors="coerce").fillna(0)  # Convert to numeric, fill NaN with 0
+    df["Estimated time in hours"] = pd.to_numeric(df["Estimated time in hours"], errors="coerce").fillna(0)  # Convert to numeric, fill NaN with 0
+    
+    # Ensure all text columns are strings
+    text_columns = ["Type of Repairer", "Type of category", "Type of garment in category", "Service", "Description"]
+    for col in text_columns:
+        df[col] = df[col].astype(str)
+    
     dataset = Dataset.from_pandas(df)
 
     # Step 1: Preprocess text columns
@@ -80,6 +107,9 @@ def main():
     # Drop the FAISS index before saving (modifies dataset in place)
     dataset.drop_index("embeddings")
     
+    # Sanitize embeddings before saving to disk
+    dataset = dataset.map(lambda x: {"embeddings": sanitize_floats(x["embeddings"])}, batched=True)
+
     # Save the dataset with embeddings
     dataset.save_to_disk("precomputed_dataset")
     
