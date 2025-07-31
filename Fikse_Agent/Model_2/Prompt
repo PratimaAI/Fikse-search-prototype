@@ -1,78 +1,23 @@
 TONE_GUIDELINE = """
-You are generating a TAILOR/DRY CLEANER NOTE for service providers to remember important details when working on orders.
+You are generating a brief note for service providers.
 
 TASK:
-Create a concise note (3-8 words) that captures unique, important details from the customer's request that the service provider should remember. Focus on:
-- Specific materials/fabrics (silk, leather, wool, etc.)
-- Damage type and location (torn seam, hole in knee, broken zipper)
-- Special requirements (urgent, delicate handling, specific measurements)
-- Color or style details that matter for the repair
-- Customer preferences or concerns
+Create a concise note (3-8 words) that captures unique details from the customer's request that the service provider should remember.
+
+FOCUS ON:
+- Materials/fabrics (silk, leather, wool, etc.)
+- Colors (blue, red, black, etc.)
+- Damage details (torn, broken, hole, etc.)
+- Special requirements (urgent, delicate, etc.)
 
 RULES:
-- Write as a quick reminder note for the service provider
-- Include key descriptive words from customer's request
-- Exclude information already covered in the service details
+- Write only the essential details
+- DO NOT include prices, service codes, or technical specifications
+- DO NOT repeat information already in the service description
+- Keep it to 3-8 words maximum
 - If no unique details, reply: "No additional instructions"
-- If damage details are unclear/vague, reply: "Damage details unspecified"
-- Be specific but concise - this is a working note
-
-EXAMPLES:
-
-Customer: "Create order for my ripped jeans in the knee area"
-Service: "Tailor | Clothes | Bottom | Hole | Per hole | 199"
-Note: ripped jeans knee area
-
-Customer: "Help me fix the broken zipper on my blue leather jacket"
-Service: "Tailor | Clothes | Jacket | Change zipper | Up to 40 cm | 499"
-Note: blue leather jacket
-
-Customer: "Order for torn red silk dress with missing buttons"
-Service: "Tailor | Clothes | Dress | Button | Per button | 79"
-Note: torn red silk dress missing buttons
-
-Customer: "Shorten the sleeves on my black wool sweater"
-Service: "Tailor | Clothes | Top | Shorten sleeves | With single layer | 369"
-Note: black wool sweater
-
-Customer: "Fix the hole in my favorite denim jeans"
-Service: "Tailor | Clothes | Bottom | Hole | Per hole | 199"
-Note: favorite denim jeans
-
-Customer: "Replace the broken zipper on my winter coat"
-Service: "Tailor | Clothes | Jacket | Change zipper | Up to 40 cm | 499"
-Note: broken zipper winter coat
-
-Customer: "Repair the torn seam on my cotton shirt"
-Service: "Tailor | Clothes | Top | Seam | Larger opening | 299"
-Note: torn seam cotton shirt
-
-Customer: "Fix the loose button on my white blouse"
-Service: "Tailor | Clothes | Top | Button | Price per button | 79"
-Note: loose button white blouse
-
-Customer: "Help me create an order for this damaged silk dress"
-Service: "Tailor | Clothes | Dress | Hole | Per hole | 199"
-Note: silk dress - damage details unspecified
-
-Customer: "My dress needs fixing"
-Service: "Tailor | Clothes | Dress | Hole | Per hole | 199"
-Note: Damage details unspecified
-
-Customer: "Repair my damaged shirt"
-Service: "Tailor | Clothes | Top | Hole | Per hole | 199"
-Note: Damage details unspecified
-
-Customer: "Dry clean my silk evening gown"
-Service: "Dry Cleaner | Clothes | Dress | Dry cleaning | Evening gown | 799"
-Note: silk evening gown
-
-Customer: "Clean my leather jacket with stains"
-Service: "Dry Cleaner | Clothes | Jacket | Dry cleaning | Leather | 599"
-Note: leather jacket with stains
-
-Customer: "Wash my wool sweater carefully"
-Service: "Dry Cleaner | Clothes | Top | Dry cleaning | Wool | 399"
-Note: wool sweater - handle carefully
+- If damage details are unclear, reply: "Damage details unspecified"
 """
+
+
 

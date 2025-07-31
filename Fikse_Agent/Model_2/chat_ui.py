@@ -149,15 +149,15 @@ with st.sidebar:
     if st.session_state.current_services:
         st.header("Available Services")
         for i, service in enumerate(st.session_state.current_services, 1):
-            st.write(f"{i}. {service['service']} - ${service['price']:.0f}")
+            st.write(f"{i}. {service['service']} - {service['price']:.0f}")
     
     # Show selected services if any
     if st.session_state.selected_services:
         st.header("Selected Services")
         total_price = sum(service['price'] for service in st.session_state.selected_services)
         for service in st.session_state.selected_services:
-            st.write(f"• {service['service']} - ${service['price']:.0f}")
-        st.write(f"**Total: ${total_price:.0f}**")
+            st.write(f"• {service['service']} - {service['price']:.0f}")
+        st.write(f"**Total: {total_price:.0f}**")
 
 # Main chat interface
 st.header("💬 Chat")
@@ -171,7 +171,7 @@ for message in st.session_state.chat_history:
         if message.get("services") and st.session_state.conversation_state != "selecting":
             st.subheader("Available Services:")
             for i, service in enumerate(message["services"], 1):
-                with st.expander(f"{i}. {service['service']} - ${service['price']:.0f}"):
+                with st.expander(f"{i}. {service['service']} - {service['price']:.0f}"):
                     st.write(f"**Description:** {service['description']}")
                     st.write(f"**Garment Type:** {service['garment_type']}")
                     st.write(f"**Repairer:** {service['repairer_type']}")
@@ -183,20 +183,20 @@ for message in st.session_state.chat_history:
             st.subheader("Selected Services:")
             total = sum(service['price'] for service in message["selected_services"])
             for service in message["selected_services"]:
-                st.markdown(f"**{service['service']}** - ${service['price']:.0f}")
-            st.markdown(f"**Subtotal: ${total:.0f}**")
+                st.markdown(f"**{service['service']}** - {service['price']:.0f}")
+            st.markdown(f"**Subtotal: {total:.0f}**")
         
         # Display order summary if included
         if message.get("order_summary"):
             order = message["order_summary"]
             st.markdown("### 📋 Order Summary")
-            st.markdown(f"**Total Price:** ${order['total_price']:.0f}")
+            st.markdown(f"**Total Price:** {order['total_price']:.0f}")
             if order.get('estimated_total_hours'):
                 st.markdown(f"**Estimated Time:** {order['estimated_total_hours']:.1f} hours")
             
             with st.expander("View All Services"):
                 for service in order['services']:
-                    st.markdown(f"• {service['service']} - ${service['price']:.0f}")
+                    st.markdown(f"• {service['service']} - {service['price']:.0f}")
         
         # Display created order if included
         if message.get("order_created"):
@@ -204,14 +204,14 @@ for message in st.session_state.chat_history:
             st.markdown("### Order Created!")
             st.markdown(f"**Order ID:** `{order['order_id']}`")
             st.markdown(f"**Created:** {order['created_at']}")
-            st.markdown(f"**Total Price:** ${order['total_price']:.0f}")
+            st.markdown(f"**Total Price:** {order['total_price']:.0f}")
             
             if order.get('estimated_total_hours'):
                 st.markdown(f"**Estimated Time:** {order['estimated_total_hours']:.1f} hours")
             
             with st.expander("View Order Details"):
                 for service in order['services']:
-                    st.markdown(f"• {service['service']} - ${service['price']:.0f}")
+                    st.markdown(f"• {service['service']} - {service['price']:.0f}")
                     st.markdown(f"  *{service['description']}*")
             
             # Option to download order as JSON
@@ -230,7 +230,7 @@ if st.session_state.conversation_state == "selecting" and st.session_state.curre
     for i, service in enumerate(st.session_state.current_services):
         col1, col2 = st.columns([3, 1])
         with col1:
-            service_text = f"**{service['service']}** - ${service['price']:.0f}"
+            service_text = f"**{service['service']}** - {service['price']:.0f}"
             if service['description']:
                 service_text += f"\n*{service['description']}*"
             st.markdown(service_text)
@@ -263,38 +263,37 @@ if st.session_state.conversation_state == "manual_addition":
             handle_order_action("No")
 
 # User input (always shown)
-if st.session_state.conversation_state not in ["confirming"]:
-    user_input = st.chat_input("Describe the issue...")
+user_input = st.chat_input("Describe the issue...")
+
+# Process user input
+if user_input:
+    # Add user message to chat history
+    st.session_state.chat_history.append({"role": "user", "content": user_input})
     
-    # Process user input
-    if user_input:
-        # Add user message to chat history
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
+    # Show user message immediately
+    with st.chat_message("user"):
+        st.markdown(user_input)
+    
+    # Call the agent API
+    response_data = send_agent_message(user_input)
+    if response_data:
+        # Update session state
+        st.session_state.conversation_state = response_data.get("conversation_state", "greeting")
+        st.session_state.current_services = response_data.get("services", [])
+        st.session_state.selected_services = response_data.get("selected_services", [])
+        st.session_state.pending_order = response_data.get("order_summary")
         
-        # Show user message immediately
-        with st.chat_message("user"):
-            st.markdown(user_input)
-        
-        # Call the agent API
-        response_data = send_agent_message(user_input)
-        if response_data:
-            # Update session state
-            st.session_state.conversation_state = response_data.get("conversation_state", "greeting")
-            st.session_state.current_services = response_data.get("services", [])
-            st.session_state.selected_services = response_data.get("selected_services", [])
-            st.session_state.pending_order = response_data.get("order_summary")
-            
-            # Add agent response to chat history
-            message_data = {
-                "role": "assistant", 
-                "content": response_data.get("response", ""),
-                "services": response_data.get("services", []),
-                "selected_services": response_data.get("selected_services", []),
-                "order_summary": response_data.get("order_summary"),
-                "order_created": response_data.get("order_created")
-            }
-            st.session_state.chat_history.append(message_data)
-            st.rerun()
+        # Add agent response to chat history
+        message_data = {
+            "role": "assistant", 
+            "content": response_data.get("response", ""),
+            "services": response_data.get("services", []),
+            "selected_services": response_data.get("selected_services", []),
+            "order_summary": response_data.get("order_summary"),
+            "order_created": response_data.get("order_created")
+        }
+        st.session_state.chat_history.append(message_data)
+        st.rerun()
 
 # Status indicator
 if st.session_state.conversation_state == "greeting":

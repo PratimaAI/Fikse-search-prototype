@@ -1,4 +1,4 @@
-# This is the modification of hybrid agent, it uses LLM(ollama model) for service selection and comment generation. 
+# (01-Aug-2025)This is the modification of hybrid agent, it uses LLM(ollama model) for service selection and comment generation. 
 # It also uses the search module. 
 # Addition:(1) This code adds the comment section after order creation using LLM based on the Prompt file.
 #(2) This code add a new function select_services which generates the single best service based on user input. 
@@ -454,6 +454,7 @@ def generate_order_comment(user_prompt: str, selected_services: list, ai_generat
     
     selected_services_text = "\n".join(service_rows)
     
+    # Generate comment using the improved prompt
     comment_prompt = (
         f"{TONE_GUIDELINE.strip()}\n\n"
         f"Customer: \"{user_prompt}\"\n"
@@ -462,39 +463,30 @@ def generate_order_comment(user_prompt: str, selected_services: list, ai_generat
     )
     
     try:
-        llm_response = ai_generator._call_ollama(comment_prompt).strip()
-        print(f"Generated comment: {llm_response}")
-        sys.stdout.flush()
+        comment_response = ai_generator._call_ollama(comment_prompt).strip()
+        comment = comment_response.strip()
         
-        # Better post-processing for more natural comments
-        if 'no additional instructions' in llm_response.lower():
-            return 'No additional instructions.'
-        
-        # Clean up the response
-        comment = llm_response.strip()
-        
-        # Remove common prefixes that LLM might add
-        prefixes_to_remove = ['comment:', 'response:', 'answer:']
-        for prefix in prefixes_to_remove:
-            if comment.lower().startswith(prefix):
-                comment = comment[len(prefix):].strip()
+        # Clean up the comment - remove any extra lines or prefixes
+        if comment.startswith("Note:"):
+            comment = comment[5:].strip()
+        if comment.startswith("Tailor/Dry Cleaner Note:"):
+            comment = comment[25:].strip()
+        if comment.startswith("Repair detail note"):
+            comment = comment.split("Final comment:")[-1].strip()
         
         # Limit to reasonable length (max 2 sentences, ~50 words)
         sentences = comment.split('.')
         if len(sentences) > 2:
             comment = '. '.join(sentences[:2]) + '.'
-        
-        # Ensure it's not empty
-        if not comment or comment.isspace():
-            return 'No additional instructions.'
-        
-        print(f"Final comment: {comment}")
+            
+        print(f"Generated note: {comment}")
         sys.stdout.flush()
-        return comment
         
     except Exception as e:
-        print(f"Comment generation failed: {e}")
-        return "No additional instructions."
+        print(f"Error generating comment: {e}")
+        comment = "No additional instructions"
+        
+    return comment
 
 @app.post("/agent")
 def hybrid_agent(input: AgentInput):
@@ -526,223 +518,73 @@ def hybrid_agent(input: AgentInput):
         
         print(f"Final intent: {intent}, context: {context}")
         
-        # Handle different conversation states
-        if session.conversation_state == "greeting":
-            if intent == "repair_request":
-                # User described what they need
-                session.current_query = input.user_input
-                session.conversation_state = "searching"
-                
-                # Search for services
-                services = query_fikse_search(input.user_input)
-                session.suggested_services = services
-                
-                if services:
-                    # Use LLM to select the best service
-                    selected_services = ai_generator.select_services_with_llm(input.user_input, services)
-                    session.selected_services = selected_services
-                    session.conversation_state = "confirming"
-                    
-                    # Generate order preview
-                    total_price = sum(s.price for s in selected_services)
-                    total_hours = sum(s.estimated_hours or 0 for s in selected_services)
-                    
-                    order = OrderSummary(
-                        order_id=str(uuid.uuid4()),
-                        services=selected_services,
-                        total_price=total_price,
-                        estimated_total_hours=total_hours if total_hours > 0 else None,
-                        created_at=datetime.now().isoformat()
-                    )
-                    session.pending_order = order
-                    
-                    # Generate comment using LLM
-                    comment = generate_order_comment(input.user_input, selected_services, ai_generator)
-                    
-                    response_text = f"**Service Found!**\n\n**Selected Service:** {selected_services[0].service}\n**Price:** ${total_price:.0f}\n**Estimated Hours:** {total_hours:.1f}h\n\n**Comment:** {comment}\n\nWould you like to proceed with this service?"
-                    
-                    return {
-                        "intent": intent,
-                        "response": response_text,
-                        "conversation_state": "confirming",
-                        "show_services": False,
-                        "order_created": order.dict(),
-                        "context": context
-                    }
-                else:
-                    response_text = "I couldn't find any services matching your request. Could you try describing it differently?"
-                    return {
-                        "intent": intent,
-                        "response": response_text,
-                        "conversation_state": "greeting",
-                        "show_services": False,
-                        "context": context
-                    }
-            elif intent == "greeting":
-                response_text = "Hi! How can I help you today?"
-                return {
-                    "intent": intent,
-                    "response": response_text,
-                    "conversation_state": "greeting",
-                    "show_services": False,
-                    "context": context
-                }
-            else:
-                response_text = "I'm not sure how to help with that. Could you describe what item needs service?"
-                return {
-                    "intent": intent,
-                    "response": response_text,
-                    "conversation_state": "greeting",
-                    "show_services": False,
-                    "context": context
-                }
-        
-        elif session.conversation_state == "confirming":
-            if intent == "confirmation":
-                # User confirmed the order
-                if session.pending_order:
-                    final_order = session.pending_order
-                    order_dict = final_order.dict()
-                    
-                    response_text = f"**Order Created Successfully!**\n\n**Order ID:** {final_order.order_id}\n**Service:** {session.selected_services[0].service}\n**Price:** ${final_order.total_price:.0f}\n**Created:** {final_order.created_at}\n\nYour service order is ready for processing! Is there anything else I can help you with?"
-                    return {
-                        "intent": intent,
-                        "response": response_text,
-                        "conversation_state": "completed",
-                        "show_services": False,
-                        "order_created": final_order.dict(),
-                        "context": context
-                    }
-            elif intent == "cancel":
-                # Reset to service selection
-                session.conversation_state = "greeting"
-                session.selected_services = []
-                session.pending_order = None
-                session.context = {}  # Clear context
-                print("Order cancelled, reset to greeting state")
-                response_text = "Order cancelled. What item would you like to get serviced?"
-                
-                return {
-                    "intent": intent,
-                    "response": response_text,
-                    "conversation_state": "greeting",
-                    "show_services": False,
-                    "context": context
-                }
-            elif intent == "repair_request":
-                # User is providing additional details or changing the request
-                session.current_query = input.user_input
-                session.conversation_state = "searching"
-                
-                # Search with new query
-                services = query_fikse_search(input.user_input)
-                session.suggested_services = services
-                
-                if services:
-                    selected_services = ai_generator.select_services_with_llm(input.user_input, services)
-                    session.selected_services = selected_services
-                    session.conversation_state = "confirming"
-                    
-                    total_price = sum(s.price for s in selected_services)
-                    total_hours = sum(s.estimated_hours or 0 for s in selected_services)
-                    
-                    order = OrderSummary(
-                        order_id=str(uuid.uuid4()),
-                        services=selected_services,
-                        total_price=total_price,
-                        estimated_total_hours=total_hours if total_hours > 0 else None,
-                        created_at=datetime.now().isoformat()
-                    )
-                    session.pending_order = order
-                    
-                    comment = generate_order_comment(input.user_input, selected_services, ai_generator)
-                    
-                    response_text = f"**Updated Service Found!**\n\n**Selected Service:** {selected_services[0].service}\n**Price:** ${total_price:.0f}\n**Estimated Hours:** {total_hours:.1f}h\n\n**Comment:** {comment}\n\nWould you like to proceed with this service?"
-                    
-                    return {
-                        "intent": intent,
-                        "response": response_text,
-                        "conversation_state": "confirming",
-                        "show_services": False,
-                        "order_created": order.dict(),
-                        "context": context
-                    }
-                else:
-                    response_text = "I couldn't find any services for that. Could you try describing it differently?"
-                    return {
-                        "intent": intent,
-                        "response": response_text,
-                        "conversation_state": "confirming",
-                        "show_services": False,
-                        "context": context
-                    }
-            else:
-                response_text = "I'm not sure how to help with that. Could you describe what item needs service?"
-                return {
-                    "intent": intent,
-                    "response": response_text,
-                    "conversation_state": "confirming",
-                    "show_services": False,
-                    "context": context
-                }
-        
-        # Handle cancellation
-        elif intent == "cancel":
-            if session.conversation_state == "confirming":
-                # Reset to service selection
-                session.conversation_state = "greeting"
-                session.selected_services = []
-                session.pending_order = None  # Clear the order preview
-                session.context = {}  # Clear context
-                print("Order cancelled, reset to greeting state")
-                response_text = "Order cancelled. What item would you like to get serviced?"
-                
-                return {
-                    "intent": intent,
-                    "response": response_text,
-                    "conversation_state": "greeting",
-                    "show_services": False,
-                    "context": context
-                }
-            else:
-                # General reset
-                session.conversation_state = "greeting"
-                session.context = {}
-                response_text = "No problem! What item would you like to get serviced?"
-                
-                return {
-                    "intent": intent,
-                    "response": response_text,
-                    "conversation_state": "greeting",
-                    "show_services": False,
-                    "context": context
-                }
-        
-        # Handle greetings with direct response
-        elif intent == "greeting":
+        # Determine response based on intent and state
+        if intent == "greeting":
+            response = "Hi! How can I help you today?"
             session.conversation_state = "greeting"
-            session.context = {}  # Clear context
-            response_text = "Hi! How can I help you today?"
             
-            return {
-                "intent": intent,
-                "response": response_text,
-                "conversation_state": "greeting",
-                "show_services": False,
-                "context": context
-            }
-        
-        # Handle unknown or other intents with a simple response
+        elif intent == "repair_request":
+            # Check if user provided sufficient details
+            has_damage = context.get('damage_type') is not None
+            has_garment = context.get('garment_type') is not None
+            
+            if has_damage and has_garment:
+                # User provided sufficient details - search and suggest services immediately
+                search_results = query_fikse_search(input.user_input)
+                if search_results:
+                    selected_services = ai_generator.select_services_with_llm(input.user_input, search_results)
+                    if selected_services:
+                        comment = generate_order_comment(input.user_input, selected_services, ai_generator)
+                        response = f"I found some services for your {context.get('garment_type', 'item')}:\n\n"
+                        for i, service in enumerate(selected_services, 1):
+                            response += f"{i}. {service.repairer_type} | {service.category} | {service.garment_type} | {service.service} | {service.service_type} | {service.price}\n"
+                        response += f"\nNote: {comment}\n\nWould you like me to create an order for any of these services?"
+                        session.conversation_state = "confirming"
+                    else:
+                        response = "I couldn't find a suitable service. Could you provide more details about the damage or try a different description?"
+                else:
+                    response = "I couldn't find any services matching your request. Could you try describing the issue differently?"
+            else:
+                # User needs to provide more details
+                response = f"I can help with your {context.get('garment_type', 'item')}. Could you describe the specific damage or issue? For example: 'hole in the knee', 'broken zipper', 'torn seam', etc."
+                session.conversation_state = "confirming"
+                    
+        elif intent == "service_selection":
+            # User is selecting a specific service
+            search_results = query_fikse_search(input.user_input)
+            if search_results:
+                selected_services = ai_generator.select_services_with_llm(input.user_input, search_results)
+                if selected_services:
+                    comment = generate_order_comment(input.user_input, selected_services, ai_generator)
+                    response = f"Great! I've selected these services for you:\n\n"
+                    for i, service in enumerate(selected_services, 1):
+                        response += f"{i}. {service.repairer_type} | {service.category} | {service.garment_type} | {service.service} | {service.service_type} | {service.price}\n"
+                    response += f"\nNote: {comment}\n\nWould you like me to create an order for this service?"
+                    session.conversation_state = "confirming"
+                else:
+                    response = "I couldn't find a suitable service. Could you provide more details?"
+            else:
+                response = "I couldn't find any services matching your request. Could you try a different description?"
+                
+        elif intent == "confirmation":
+            if session.conversation_state == "confirming":
+                # User confirmed the service - create order
+                response = "Perfect! I've created an order for you. The service provider will contact you soon with details. Is there anything else I can help you with?"
+                session.conversation_state = "greeting"
+            else:
+                response = "I'm not sure what you're confirming. Could you describe what you need help with?"
+                
         else:
-            response_text = "I'm not sure how to help with that. Could you describe what item needs service?"
-            
-            return {
-                "intent": intent,
-                "response": response_text,
-                "conversation_state": session.conversation_state,
-                "show_services": False,
-                "context": context
-            }
+            response = "I'm not sure how to help with that. Could you describe what you need? For example: 'repair my jeans', 'fix a zipper', 'shorten my dress', etc."
+            session.conversation_state = "greeting"
+        
+        return {
+            "intent": intent,
+            "response": response,
+            "conversation_state": session.conversation_state,
+            "show_services": False,
+            "context": context
+        }
     
     except Exception as e:
         return {
