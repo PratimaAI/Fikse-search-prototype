@@ -4,6 +4,8 @@ from transformers import AutoTokenizer, AutoModel
 import torch
 import spacy
 import math
+import json
+import os
 
 # Load spaCy model for lemmatization
 nlp = spacy.load("en_core_web_sm")
@@ -15,7 +17,7 @@ def lemmatize_and_lower(text):
     return " ".join([token.lemma_ for token in doc])
 
 def preprocess_batch(batch):
-    # Apply lemmatization and lowercasing to all string fields
+    # Apply lemmatize_and_lower to all string fields
     processed = {}
     for key, values in batch.items():
         processed[key] = [
@@ -24,18 +26,13 @@ def preprocess_batch(batch):
         ]
     return processed
 
-def concatenate_text(batch):
+def concatenate_text(batch, text_columns):
     texts = []
-    for i in range(len(batch["Type of Repairer"])):
-        text = (
-            str(batch["Type of Repairer"][i]) + "\n"
-            + str(batch["Type of category"][i]) + "\n"
-            + str(batch["Type of garment in category"][i]) + "\n"
-            + str(batch["Service"][i]) + "\n"
-            + str(batch["Description"][i]) + "\n"
-            + str(batch["Price"][i]) + "\n"
-            + str(batch["Estimated time in hours"][i])
-        )
+    for i in range(len(batch[text_columns[0]])):
+        text_parts = []
+        for col in text_columns:
+            text_parts.append(str(batch[col][i]))
+        text = "\n".join(text_parts)
         texts.append(lemmatize_and_lower(text))
     return {"text": texts}
 
@@ -68,6 +65,112 @@ def sanitize_floats(obj):
     else:
         return obj
 
+def detect_column_mapping(df):
+    """
+    Automatically detect column mapping based on common patterns
+    Returns a dictionary mapping standard names to actual column names
+    """
+    columns = df.columns.tolist()
+    mapping = {}
+    
+    # Common patterns for different column types
+    patterns = {
+        'business_type': ['business_type', 'business', 'repairer', 'repairer_type', 'type_of_repairer', 'provider', 'vendor'],
+        'category': ['category', 'item_category', 'item_category_name', 'type_of_category', 'category_name', 'product_category'],
+        'item_name': ['item_name', 'item', 'garment', 'garment_type', 'type_of_garment', 'product_name', 'product'],
+        'service_name': ['service_name', 'service', 'service_type', 'type_of_service', 'service_title'],
+        'service_type': ['service_type', 'service_category', 'service_kind', 'service_class'],
+        'description': ['description', 'service_description', 'desc', 'details', 'service_details'],
+        'price': ['price', 'service_price', 'cost', 'amount', 'estimated_price', 'rate', 'fee'],
+        'hours': ['hours', 'hours_estimate', 'estimated_hours', 'time', 'estimated_time', 'duration', 'work_hours']
+    }
+    
+    for standard_name, possible_names in patterns.items():
+        for col in columns:
+            if col.lower() in [name.lower() for name in possible_names]:
+                mapping[standard_name] = col
+                break
+    
+    # If no mapping found for required fields, use first available columns
+    required_fields = ['business_type', 'category', 'item_name', 'service_name', 'description', 'price']
+    for field in required_fields:
+        if field not in mapping and columns:
+            mapping[field] = columns[0]  # Fallback to first column
+    
+    print(f"📊 Detected column mapping: {mapping}")
+    return mapping
+
+def create_standardized_dataset(df, column_mapping):
+    """
+    Create a standardized dataset with consistent column names
+    This ensures all downstream modules work with the same interface
+    """
+    standardized_df = df.copy()
+    
+    # Create standardized columns
+    standardized_columns = {
+        'business_type': column_mapping.get('business_type', 'business_type'),
+        'category': column_mapping.get('category', 'category'),
+        'item_name': column_mapping.get('item_name', 'item_name'),
+        'service_name': column_mapping.get('service_name', 'service_name'),
+        'service_type': column_mapping.get('service_type', 'service_type'),
+        'description': column_mapping.get('description', 'description'),
+        'price': column_mapping.get('price', 'price'),
+        'hours': column_mapping.get('hours', 'hours')
+    }
+    
+    # Rename columns to standard names
+    rename_mapping = {v: k for k, v in standardized_columns.items() if v in df.columns}
+    standardized_df = standardized_df.rename(columns=rename_mapping)
+    
+    # Add missing columns with defaults
+    for col in ['business_type', 'category', 'item_name', 'service_name', 'service_type', 'description', 'price', 'hours']:
+        if col not in standardized_df.columns:
+            if col in ['price', 'hours']:
+                standardized_df[col] = 0
+            else:
+                standardized_df[col] = "Unknown"
+    
+    return standardized_df
+
+def save_shared_config(column_mapping, dataset_info):
+    """
+    Save comprehensive shared configuration for all modules
+    """
+    config = {
+        "dataset_info": dataset_info,
+        "standard_columns": [
+            "business_type", "category", "item_name", "service_name", 
+            "service_type", "description", "price", "hours"
+        ],
+        "search_priorities": {
+            "exact_service_name": "service_name",
+            "partial_service_name": "service_name", 
+            "service_type": "service_type",
+            "description": "description",
+            "item_name": "item_name",
+            "business_type": "business_type",
+            "category": "category"
+        },
+        "price_column": "price",
+        "hours_column": "hours",
+        "text_columns": ["business_type", "category", "item_name", "service_name", "service_type", "description"],
+        "search_priority_order": [
+            "exact_service_name",
+            "partial_service_name", 
+            "service_type",
+            "description",
+            "item_name",
+            "category",
+            "business_type"
+        ]
+    }
+    
+    with open("dataset.json", "w") as f:
+        json.dump(config, f, indent=2)
+    
+    print(f"📋 Dataset configuration saved to dataset.json")
+
 def main():
     device = torch.device("cpu")
     model_checkpoint = "sentence-transformers/all-MiniLM-L6-v2"
@@ -75,25 +178,43 @@ def main():
     model = AutoModel.from_pretrained(model_checkpoint).to(device)
 
     # Load and clean the dataset
-    df = pd.read_csv("Dataset_agent_new.csv", delimiter=";")
+    df = pd.read_csv("HUB_Service.csv", delimiter=";")
+    
+    # Auto-detect column mapping
+    column_mapping = detect_column_mapping(df)
+    
+    # Create standardized dataset
+    standardized_df = create_standardized_dataset(df, column_mapping)
     
     # Clean missing values and ensure proper data types
-    df = df.fillna("")  # Replace NaN with empty string for text columns
-    df["Price"] = pd.to_numeric(df["Price"], errors="coerce").fillna(0)  # Convert to numeric, fill NaN with 0
-    df["Estimated time in hours"] = pd.to_numeric(df["Estimated time in hours"], errors="coerce").fillna(0)  # Convert to numeric, fill NaN with 0
+    standardized_df = standardized_df.fillna("")  # Replace NaN with empty string for text columns
+    
+    # Convert price and hours to numeric
+    standardized_df["price"] = pd.to_numeric(standardized_df["price"], errors="coerce").fillna(0)
+    standardized_df["hours"] = pd.to_numeric(standardized_df["hours"], errors="coerce").fillna(0)
     
     # Ensure all text columns are strings
-    text_columns = ["Type of Repairer", "Type of category", "Type of garment in category", "Service", "Description"]
+    text_columns = ["business_type", "category", "item_name", "service_name", "service_type", "description"]
     for col in text_columns:
-        df[col] = df[col].astype(str)
+        standardized_df[col] = standardized_df[col].astype(str)
     
-    dataset = Dataset.from_pandas(df)
+    # Save shared configuration
+    dataset_info = {
+        "original_columns": list(df.columns),
+        "standardized_columns": list(standardized_df.columns),
+        "total_rows": len(standardized_df),
+        "file_name": "HUB_Service.csv",
+        "column_mapping": column_mapping
+    }
+    save_shared_config(column_mapping, dataset_info)
+    
+    dataset = Dataset.from_pandas(standardized_df)
 
     # Step 1: Preprocess text columns
     dataset = dataset.map(preprocess_batch, batched=True)
 
     # Step 2: Create "text" column by concatenation
-    dataset = dataset.map(concatenate_text, batched=True)
+    dataset = dataset.map(lambda batch: concatenate_text(batch, text_columns), batched=True)
 
     # Step 3: Embed with transformer
     dataset = dataset.map(lambda batch: embed_batch(batch, tokenizer, model, device), batched=True, batch_size=1)
@@ -114,6 +235,8 @@ def main():
     dataset.save_to_disk("precomputed_dataset")
     
     print("✅ Dataset and FAISS index saved successfully!")
+    print(f"📋 Dataset configuration saved to dataset.json")
+    print(f"🔧 Standardized columns: {list(standardized_df.columns)}")
 
 if __name__ == "__main__":
     main()

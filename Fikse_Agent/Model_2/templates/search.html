@@ -54,6 +54,19 @@
       float: right;
       color: #888;
     }
+    .match-type {
+      display: inline-block;
+      background: #e9ecef;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-left: 10px;
+    }
+    .loading {
+      text-align: center;
+      color: #666;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
@@ -65,35 +78,102 @@
   <div class="results" id="results"></div>
 
   <script>
+    let datasetConfig = null;
+    let columnDisplayNames = {};
+
+    // Load dataset configuration on page load
+    async function loadDatasetConfig() {
+      try {
+        const response = await fetch('/dataset-config');
+        const config = await response.json();
+        datasetConfig = config;
+        
+        // Create display names for columns
+        columnDisplayNames = {
+          'business_type': 'Business Type',
+          'category': 'Category', 
+          'item_name': 'Item Name',
+          'service_name': 'Service Name',
+          'service_type': 'Service Type',
+          'description': 'Description',
+          'price': 'Price',
+          'hours': 'Hours'
+        };
+        
+        console.log('Dataset configuration loaded:', config);
+      } catch (error) {
+        console.error('Failed to load dataset config:', error);
+        // Fallback to default configuration
+        datasetConfig = {
+          standard_columns: ['business_type', 'category', 'item_name', 'service_name', 'service_type', 'description', 'price', 'hours']
+        };
+      }
+    }
+
+    // Format column name for display
+    function formatColumnName(columnName) {
+      return columnDisplayNames[columnName] || columnName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    }
+
+    // Get value safely with fallback
+    function getValue(item, columnName) {
+      return item[columnName] || item[columnName.toLowerCase()] || "N/A";
+    }
+
     async function search() {
       const query = document.getElementById("query").value;
-      const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
-      const data = await response.json();
-
       const container = document.getElementById("results");
-      container.innerHTML = "";
+      
+      // Show loading
+      container.innerHTML = '<div class="loading">Searching...</div>';
+      
+      try {
+        const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
 
-      if (data.length === 0) {
-        container.innerHTML = "<p>No results found.</p>";
-        return;
+        container.innerHTML = "";
+
+        if (data.length === 0) {
+          container.innerHTML = "<p>No results found.</p>";
+          return;
+        }
+
+        // Get standard columns from config or use default
+        const standardColumns = datasetConfig?.standard_columns || [
+          'business_type', 'category', 'item_name', 'service_name', 
+          'service_type', 'description', 'price', 'hours'
+        ];
+
+        data.forEach(item => {
+          const card = document.createElement("div");
+          card.className = "card";
+          
+          // Build HTML dynamically based on available columns
+          let htmlContent = '';
+          
+          standardColumns.forEach(column => {
+            const displayName = formatColumnName(column);
+            const value = getValue(item, column);
+            htmlContent += `<strong>${displayName}:</strong> ${value}<br/>`;
+          });
+          
+          // Add score and match type
+          htmlContent += `
+            <span class="score">Score: ${item["similarity_score"]?.toFixed(2) || "N/A"}</span>
+            <span class="match-type">${item["match_type"] || "N/A"}</span>
+          `;
+          
+          card.innerHTML = htmlContent;
+          container.appendChild(card);
+        });
+      } catch (error) {
+        console.error('Search error:', error);
+        container.innerHTML = '<p>Error performing search. Please try again.</p>';
       }
-
-      data.forEach(item => {
-        const card = document.createElement("div");
-        card.className = "card";
-        card.innerHTML = `
-          <strong>Type of Repairer:</strong> ${item["Type of Repairer"] || "N/A"}<br/>
-          <strong>Category:</strong> ${item["Type of category"] || "N/A"}<br/>
-          <strong>Garment:</strong> ${item["Type of garment in category"] || "N/A"}<br/>
-          <strong>Service:</strong> ${item["Service"] || "N/A"}<br/>
-          <strong>Description:</strong> ${item["Description"] || "N/A"}<br/>
-          <strong>Price:</strong> ${item["Price"] || "N/A"}<br/>
-          <strong>Time:</strong> ${item["Estimated time in hours"] || "N/A"}<br/>
-          <span class="score">Score: ${item["similarity_score"]?.toFixed(2)}</span>
-        `;
-        container.appendChild(card);
-      });
     }
+
+    // Load configuration when page loads
+    window.onload = loadDatasetConfig;
   </script>
 </body>
 </html>
