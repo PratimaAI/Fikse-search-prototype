@@ -19,5 +19,13 @@ RULES:
 - If damage details are unclear, reply: "Damage details unspecified"
 """
 
+Examples:
 
+- User: I have a blue jacket. It's zipper needs to be changed to a black zipper.
+- Selected Service (s) description: 1. Clothes - Jacket - Change Zipper - Longer than 40 cm
+- Comment: Change to black zipper
 
+- User: I want to create an order for a hole in a jacket.
+- Selected Service (s) description: Item 1: 1. Clothes - Jacket - Hole - Per hole. Item 
+- Comment: Fix one hole in jacket
+- 

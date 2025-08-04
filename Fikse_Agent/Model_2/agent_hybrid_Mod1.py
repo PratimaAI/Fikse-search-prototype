@@ -25,7 +25,7 @@ GARMENT_TYPES = frozenset([
     "jeans", "trousers", "sweater", "cardigan", "blazer", "shorts", "top", 
     "outfit", "clothing", "garment", "clothes", "arm", "backpack", "bag", 
     "belt", "boots", "bottom", "bunad", "bunad silver", "button", "chain", 
-    "bracelet", "curtain", "dress shoes", "flats", "hat", "hole", "jewellery", 
+    "bracelet", "curtain", "dress shoes", "flats", "hat", "jewellery", 
     "necklace", "pearl", "ring", "seam", "sleeves", "sneakers", "wedding dress", 
     "winter shoes",
     # Service-related terms
@@ -43,7 +43,7 @@ FABRIC_TYPES = frozenset([
 ])
 
 DAMAGE_TYPES = frozenset([
-    "tear", "torn", "hole", "stain", "zipper", "button", "seam", "hem", "rip", 
+    "tear", "torn", "hole", "holes", "stain", "zipper", "button", "seam", "hem", "rip", 
     "worn", "faded", "shrunk", "stretched", "loose", "tight", "broken",
     "damaged", "ruined", "falling apart", "needs fixing", "polishing", 
     "replace", "adjustment", "overhaul", "dirty", "moldy", "mildew",
@@ -173,8 +173,11 @@ def detect_intent_and_context(text: str) -> Dict:
     # Detect garment types using set intersection for better performance
     garment_intersection = GARMENT_TYPES.intersection(text_lower.split())
     if garment_intersection:
-        context["garment_type"] = next(iter(garment_intersection))
-        print(f"Found garment: {context['garment_type']}")
+        # Filter out common words that shouldn't be garment types
+        filtered_garments = [g for g in garment_intersection if g not in ["help", "service", "repair", "fix", "create", "order"]]
+        if filtered_garments:
+            context["garment_type"] = next(iter(filtered_garments))
+            print(f"Found garment: {context['garment_type']}")
     
     # Detect fabric types
     fabric_intersection = FABRIC_TYPES.intersection(text_lower.split())
@@ -341,10 +344,9 @@ Only select from the numbers shown above. Do not invent new options or numbers.
             # Only return the first valid selection
             selected_service = selected[:1]
             
-            # Print detailed information about selected service
-            print("Selected services:")
+            # Print selected service information
             for s in selected_service:
-                print(f"- {s.repairer_type} | {s.category} | {s.garment_type} | {s.service} | {s.service_type} | {s.description} | {s.price}")
+                print(f"Selected Service: {s.repairer_type} | {s.category} | {s.garment_type} | {s.service} | {s.service_type} | {s.description} | {s.price}")
             sys.stdout.flush()
             
             return selected_service
@@ -424,6 +426,9 @@ def query_fikse_search(query: str) -> List[ServiceItem]:
 
 ai_generator = AIResponseGenerator()
 
+# Global session storage
+sessions = {}
+
 # Utility to load and cache the TONE_GUIDELINE from the Prompt file
 def get_tone_guideline(prompt_path="Prompt"):
     if not hasattr(get_tone_guideline, "_cache"):
@@ -436,57 +441,77 @@ def get_tone_guideline(prompt_path="Prompt"):
                     content = f.read()
                 # Extract the TONE_GUIDELINE string if present
                 if "TONE_GUIDELINE" in content:
-                    local_vars = {}
-                    exec(content, {}, local_vars)
-                    get_tone_guideline._cache = local_vars.get("TONE_GUIDELINE", content)
+                    # Find the TONE_GUIDELINE assignment
+                    lines = content.split('\n')
+                    for i, line in enumerate(lines):
+                        if line.strip().startswith('TONE_GUIDELINE'):
+                            # Extract the multi-line string
+                            start_line = i
+                            # Find the end of the multi-line string
+                            for j in range(i + 1, len(lines)):
+                                if '"""' in lines[j]:
+                                    end_line = j
+                                    break
+                            else:
+                                end_line = len(lines)
+                            
+                            # Extract the TONE_GUIDELINE content
+                            guideline_lines = lines[start_line:end_line + 1]
+                            guideline_content = '\n'.join(guideline_lines)
+                            
+                            # Extract just the string content
+                            if '"""' in guideline_content:
+                                start_idx = guideline_content.find('"""') + 3
+                                end_idx = guideline_content.rfind('"""')
+                                if end_idx > start_idx:
+                                    get_tone_guideline._cache = guideline_content[start_idx:end_idx].strip()
+                                    break
+                    
+                    if get_tone_guideline._cache is None:
+                        get_tone_guideline._cache = content
                 else:
                     get_tone_guideline._cache = content
     return get_tone_guideline._cache
 
 def generate_order_comment(user_prompt: str, selected_services: list, ai_generator) -> str:
+    print("Starting comment generation...")
     TONE_GUIDELINE = get_tone_guideline()  # Cached, loaded once
+    selected_services_text = ", ".join([s.description or s.service for s in selected_services])
+    print(f"Service descriptions: {selected_services_text}")
     
-    # Create full service row information for each selected service
-    service_rows = []
-    for s in selected_services:
-        service_row = f"{s.repairer_type} | {s.category} | {s.garment_type} | {s.service} | {s.service_type} | {s.description} | {s.price}"
-        service_rows.append(service_row)
-    
-    selected_services_text = "\n".join(service_rows)
-    
-    # Generate comment using the improved prompt
-    comment_prompt = (
-        f"{TONE_GUIDELINE.strip()}\n\n"
-        f"Customer: \"{user_prompt}\"\n"
-        f"Service: {selected_services_text}\n\n"
-        f"Note:"
-    )
+    # Use the TONE_GUIDELINE properly as instructed in the Prompt file
+    comment_prompt = f"""{TONE_GUIDELINE}
+
+User: "{user_prompt}"
+Selected Service description: {selected_services_text}
+Comment:"""
     
     try:
-        comment_response = ai_generator._call_ollama(comment_prompt).strip()
-        comment = comment_response.strip()
+        print("Calling Ollama for comment...")
+        llm_response = ai_generator._call_ollama(comment_prompt).strip()
+        print(f"LLM response: {llm_response}")
         
-        # Clean up the comment - remove any extra lines or prefixes
-        if comment.startswith("Note:"):
-            comment = comment[5:].strip()
-        if comment.startswith("Tailor/Dry Cleaner Note:"):
-            comment = comment[25:].strip()
-        if comment.startswith("Repair detail note"):
-            comment = comment.split("Final comment:")[-1].strip()
+        # Clean up the response - take only the first sentence and limit to 3-8 words
+        comment = llm_response.split('.')[0].strip()
         
-        # Limit to reasonable length (max 2 sentences, ~50 words)
-        sentences = comment.split('.')
-        if len(sentences) > 2:
-            comment = '. '.join(sentences[:2]) + '.'
+        # Check for special cases as per TONE_GUIDELINE
+        if 'no additional instructions' in comment.lower():
+            return 'No additional instructions.'
+        if 'damage details unspecified' in comment.lower():
+            return 'Damage details unspecified.'
             
-        print(f"Generated note: {comment}")
-        sys.stdout.flush()
-        
+        # Limit to 3-8 words as per TONE_GUIDELINE
+        words = comment.split()
+        if len(words) > 8:
+            result = ' '.join(words[:8])
+        else:
+            result = comment
+            
+        print(f"Final comment: {result}")
+        return result
     except Exception as e:
-        print(f"Error generating comment: {e}")
-        comment = "No additional instructions"
-        
-    return comment
+        print(f"Error in comment generation: {e}")
+        return "No additional instructions."
 
 @app.post("/agent")
 def hybrid_agent(input: AgentInput):
@@ -494,7 +519,6 @@ def hybrid_agent(input: AgentInput):
     try:
         print(f"\n=== NEW REQUEST ===")
         print(f"User input: {input.user_input}")
-        print(f"Session ID: {input.session_id}")
         sys.stdout.flush()
         
         session = get_session(input.session_id)
@@ -524,30 +548,71 @@ def hybrid_agent(input: AgentInput):
             session.conversation_state = "greeting"
             
         elif intent == "repair_request":
-            # Check if user provided sufficient details
-            has_damage = context.get('damage_type') is not None
-            has_garment = context.get('garment_type') is not None
-            
-            if has_damage and has_garment:
-                # User provided sufficient details - search and suggest services immediately
-                search_results = query_fikse_search(input.user_input)
-                if search_results:
-                    selected_services = ai_generator.select_services_with_llm(input.user_input, search_results)
-                    if selected_services:
-                        comment = generate_order_comment(input.user_input, selected_services, ai_generator)
-                        response = f"I found some services for your {context.get('garment_type', 'item')}:\n\n"
-                        for i, service in enumerate(selected_services, 1):
-                            response += f"{i}. {service.repairer_type} | {service.category} | {service.garment_type} | {service.service} | {service.service_type} | {service.price}\n"
-                        response += f"\nNote: {comment}\n\nWould you like me to create an order for any of these services?"
-                        session.conversation_state = "confirming"
-                    else:
-                        response = "I couldn't find a suitable service. Could you provide more details about the damage or try a different description?"
-                else:
-                    response = "I couldn't find any services matching your request. Could you try describing the issue differently?"
-            else:
-                # User needs to provide more details
-                response = f"I can help with your {context.get('garment_type', 'item')}. Could you describe the specific damage or issue? For example: 'hole in the knee', 'broken zipper', 'torn seam', etc."
+            # Handle repair requests (auto-selection only) - like the working version
+            services = query_fikse_search(input.user_input)
+            candidate_services = services[:10]
+            session.suggested_services = candidate_services
+            session.current_query = input.user_input
+
+            if services:
+                # Auto-select 1 or 2 best services using LLM
+                selected_services = ai_generator.select_services_with_llm(input.user_input, session.suggested_services)
+                session.selected_services = selected_services
                 session.conversation_state = "confirming"
+
+
+
+                # Create order summary preview for confirmation
+                total_price = sum(s.price for s in selected_services)
+                total_hours = sum(s.estimated_hours for s in selected_services if s.estimated_hours)
+                order_preview = OrderSummary(
+                    order_id="PREVIEW",
+                    services=selected_services,
+                    total_price=total_price,
+                    estimated_total_hours=total_hours,
+                    created_at=""
+                )
+                session.pending_order = order_preview
+
+                # Generate comment only in auto-selection flow
+                print("About to generate comment...")
+                order_comment = generate_order_comment(session.current_query or "", selected_services, ai_generator)
+                print(f"Comment generated: {order_comment}")
+                order_dict = order_preview.dict()
+                order_dict['comment'] = order_comment
+
+                # Show garment type per service in the preview
+                service_lines = [
+                    f"Type of category: {s.category}\nType of garment in category: {s.garment_type}\nService: {s.service}\nPrice: ${s.price:.0f}\n"
+                    for s in selected_services
+                ]
+                response_text = (
+                    f"**Order Preview**\n\n"
+                    f"\n".join(service_lines) + "\n"
+                    f"**Total Price:** ${total_price:.0f}\n"
+                    f"**Comment:** {order_comment}\n\n"
+                    f"Please confirm to proceed with your repair order."
+                )
+                return {
+                    "intent": intent,
+                    "response": response_text,
+                    "conversation_state": "confirming",
+                    "show_services": False,
+                    "selected_services": [s.dict() for s in selected_services],
+                    "order_summary": order_dict,
+                    "context": context
+                }
+            else:
+                garment_info = context.get('garment_type', 'item')
+                response_text = f"I couldn't find services for your {garment_info}. Could you describe the damage in more detail?"
+                return {
+                    "intent": intent,
+                    "response": response_text,
+                    "conversation_state": "searching",
+                    "show_services": False,
+                    "services": [],
+                    "context": context
+                }
                     
         elif intent == "service_selection":
             # User is selecting a specific service
@@ -569,11 +634,63 @@ def hybrid_agent(input: AgentInput):
         elif intent == "confirmation":
             if session.conversation_state == "confirming":
                 # User confirmed the service - create order
-                response = "Perfect! I've created an order for you. The service provider will contact you soon with details. Is there anything else I can help you with?"
-                session.conversation_state = "greeting"
+                if session.selected_services:
+                    final_order = OrderSummary(
+                        order_id=f"ORD-{uuid.uuid4().hex[:2].upper()}",
+                        services=session.selected_services,
+                        total_price=sum(s.price for s in session.selected_services),
+                        estimated_total_hours=sum(s.estimated_hours for s in session.selected_services if s.estimated_hours),
+                        created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    )
+                    session.pending_order = final_order
+                    session.conversation_state = "completed"
+
+                    order_dict = final_order.dict()
+                    # Do not generate or attach a comment here
+
+                    response_text = f"**Order Created Successfully!**\n\n**Order ID:** {final_order.order_id}\n**Service:** {session.selected_services[0].service}\n**Price:** ${final_order.total_price:.0f}\n**Created:** {final_order.created_at}\n\nYour repair order is ready for processing! Is there anything else I can help you with?"
+                    return {
+                        "intent": intent,
+                        "response": response_text,
+                        "conversation_state": "completed",
+                        "show_services": False,
+                        "order_created": final_order.dict(),
+                        "context": context
+                    }
+                else:
+                    response = "I'm not sure what you're confirming. Could you describe what you need help with?"
             else:
                 response = "I'm not sure what you're confirming. Could you describe what you need help with?"
                 
+        elif intent == "cancel":
+            if session.conversation_state == "confirming":
+                # Reset to service selection
+                session.conversation_state = "selecting"
+                session.selected_services = []
+                session.pending_order = None  # Clear the order preview
+                print("Order cancelled, reset to selecting state")
+                response_text = "Order cancelled. Please select a different service by typing its number (1, 2, 3, etc.):"
+                
+                return {
+                    "intent": intent,
+                    "response": response_text,
+                    "conversation_state": "selecting",
+                    "show_services": len(session.suggested_services) > 0,
+                    "services": [s.dict() for s in session.suggested_services],
+                    "context": context
+                }
+            else:
+                # General reset
+                session.conversation_state = "greeting"
+                response_text = "No problem! What clothing item would you like to get repaired?"
+                
+                return {
+                    "intent": intent,
+                    "response": response_text,
+                    "conversation_state": "greeting",
+                    "show_services": False,
+                    "context": context
+                }
         else:
             response = "I'm not sure how to help with that. Could you describe what you need? For example: 'repair my jeans', 'fix a zipper', 'shorten my dress', etc."
             session.conversation_state = "greeting"
