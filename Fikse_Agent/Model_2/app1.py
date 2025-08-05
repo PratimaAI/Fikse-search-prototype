@@ -1,3 +1,5 @@
+# This is the search engine for agent (this will be working with whole sentences)
+
 import sys
 print("Python executable:", sys.executable)
 
@@ -13,6 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from transformers import AutoTokenizer, AutoModel
 from symspellpy.symspellpy import SymSpell, Verbosity
+from rapidfuzz import fuzz
 
 # Import only the functions from precompute_dataset.py
 from precompute_dataset import cls_pooling, get_embeddings
@@ -62,6 +65,62 @@ def extract_price(text):
     match = re.search(r"\b(\d{2,5})\b", text)
     return int(match.group(1)) if match else None
 
+# === New Search Functions ===
+def detect_service_type_from_query(query):
+    """Detect service type from user query keywords"""
+    query_lower = query.lower()
+    
+    # REPAIR detection (65% of dataset)
+    repair_keywords = ["damaged", "broken", "torn", "hole", "holes", "repair", "fix", "mend", "patching"]
+    if any(keyword in query_lower for keyword in repair_keywords):
+        return "repair"
+    
+    # ALTERATION detection (26% of dataset)
+    alteration_keywords = ["shorten", "lengthen", "take in", "take out", "alteration", "alter", "adjust"]
+    if any(keyword in query_lower for keyword in alteration_keywords):
+        return "alteration"
+    
+    # DRY CLEANING detection (8% of dataset)
+    dry_clean_keywords = ["dryclean", "dry cleaning", "clean", "washing", "polishing"]
+    if any(keyword in query_lower for keyword in dry_clean_keywords):
+        return "dry cleaning"
+    
+    return None
+
+def fuzzy_match(query_term, target_text, threshold=85):
+    """Perform fuzzy matching with specified threshold"""
+    if not target_text or pd.isna(target_text):
+        return 0
+    return fuzz.partial_ratio(query_term.lower(), str(target_text).lower())
+
+def calculate_combined_score(semantic_score, fuzzy_score, match_type, match_priority):
+    """Calculate combined score from semantic, fuzzy, and match type"""
+    # Normalize semantic score (typically 20-35 range)
+    normalized_semantic = max(0, min(1, (semantic_score - 20) / 15))
+    
+    # Normalize fuzzy score (0-100)
+    normalized_fuzzy = fuzzy_score / 100
+    
+    # Combined score formula
+    combined_score = (
+        normalized_semantic * 0.3 +      # 30% semantic
+        normalized_fuzzy * 0.4 +         # 40% fuzzy matching
+        match_priority * 0.3             # 30% match type priority
+    )
+    
+    return combined_score
+
+def extract_search_terms(query):
+    """Extract meaningful search terms from query"""
+    # Remove common words that don't help with search
+    stop_words = {"help", "me", "create", "an", "order", "for", "this", "that", "the", "a", "my", "want", "to", "i"}
+    
+    # Clean and split query
+    cleaned_query = re.sub(r'[^\w\s]', ' ', query.lower())
+    terms = [term for term in cleaned_query.split() if term not in stop_words and len(term) > 2]
+    
+    return terms
+
 def load_shared_config():
     """Load dataset configuration from JSON file"""
     try:
@@ -71,11 +130,11 @@ def load_shared_config():
         print("⚠️  dataset.json not found. Using default configuration.")
         return {
             "search_priorities": {
-                "exact_service_name": "service_name",
-                "partial_service_name": "service_name", 
                 "service_type": "service_type",
-                "description": "description",
                 "item_name": "item_name",
+                "category": "category",
+                "service_name": "service_name",
+                "description": "description",
                 "business_type": "business_type"
             },
             "price_column": "price",
@@ -109,13 +168,23 @@ def search_api(q: str):
     if dataset is None:
         return {"error": "Dataset not loaded. Please restart server."}
 
-    corrected_query = correct_query(q)
-    normalized_query = lemmatize_and_lower(corrected_query)
-    target_price = extract_price(corrected_query)
+    print(f"🔍 NEW SEARCH REQUEST: '{q}'")
     
-    # STAGE 1: Get semantic candidates
-    print(f"🔍 Searching for: '{q}' (normalized: '{normalized_query}')")
-    query_embedding = embed_text([normalized_query])[0]
+    # Step 1: Query preprocessing
+    corrected_query = correct_query(q.lower())
+    search_terms = extract_search_terms(corrected_query)
+    detected_service_type = detect_service_type_from_query(corrected_query)
+    
+    print(f"📝 Query processing:")
+    print(f"  - Original: '{q}'")
+    print(f"  - Corrected: '{corrected_query}'")
+    print(f"  - Search terms: {search_terms}")
+    print(f"  - Detected service type: {detected_service_type}")
+    
+    # Step 2: Semantic search on FULL dataset first (no filtering yet)
+    print(f"🔍 Stage 1: Semantic search on full dataset...")
+    print(f"  → Getting query embeddings...")
+    query_embedding = embed_text([corrected_query])[0]
     scores, samples = dataset.get_nearest_examples(
         index_name="embeddings", query=query_embedding, k=100
     )
@@ -123,193 +192,123 @@ def search_api(q: str):
     all_results = pd.DataFrame(samples)
     all_results["similarity_score"] = scores
     
-    # STAGE 2: Enhanced keyword matching with damage detection
-    search_terms = [term.lower() for term in q.split()]
+    print(f"  - Found {len(all_results)} semantic candidates")
     
-    # Detect damage-related terms
-    damage_terms = ["damaged", "broken", "torn", "ripped", "hole", "stain", "repair", "fix", "mend"]
-    has_damage_context = any(term in search_terms for term in damage_terms)
-    
-    # Detect fabric-specific terms
-    fabric_terms = ["silk", "cotton", "wool", "leather", "denim", "linen", "polyester"]
-    has_fabric_context = any(term in search_terms for term in fabric_terms)
-    
-    print(f"🎯 Looking for terms: {search_terms}")
-    if has_damage_context:
-        print(f"🔧 Damage context detected: {[term for term in search_terms if term in damage_terms]}")
-    if has_fabric_context:
-        print(f"🧵 Fabric context detected: {[term for term in search_terms if term in fabric_terms]}")
-    
-    exact_service_matches = []
-    partial_service_matches = []
-    service_type_matches = []
-    description_matches = []
-    item_name_matches = []
-    category_matches = []
-    business_type_matches = []
-    semantic_only = []
-    
-    # Get column names from shared configuration
-    priorities = config["search_priorities"]
-    priority_order = config.get("search_priority_order", [
-        "exact_service_name", "partial_service_name", "service_type", 
-        "description", "item_name", "category", "business_type"
-    ])
-    
-    # Categorize matches by relevance
-    for i, row in all_results.iterrows():
-        # Get field values using shared configuration
-        service_name_lower = str(row.get(priorities["exact_service_name"], "")).lower()
-        service_type_lower = str(row.get(priorities["service_type"], "")).lower()
-        description_lower = str(row.get(priorities["description"], "")).lower()
-        item_name_lower = str(row.get(priorities["item_name"], "")).lower()
-        business_type_lower = str(row.get(priorities["business_type"], "")).lower()
-        category_lower = str(row.get(priorities.get("category", "category"), "")).lower()
+    # Step 3: Filter by service type AFTER semantic search
+    if detected_service_type:
+        print(f"🎯 Stage 2: Filtering semantic results by service type '{detected_service_type}'")
+        before_filter = len(all_results)
+        all_results = all_results[all_results['service_type'] == detected_service_type.lower()]
+        after_filter = len(all_results)
+        print(f"  - Filtered from {before_filter} to {after_filter} {detected_service_type} candidates")
         
-        match_found = False
-        match_details = []
-        
-        # Check each search term
-        for term in search_terms:
-            # Highest priority: Exact service name match
-            if term == service_name_lower:
-                exact_service_matches.append((row, scores[i], f"exact_service_name:{term}"))
-                match_found = True
-                break
-            # High priority: Partial service name match
-            elif term in service_name_lower:
-                partial_service_matches.append((row, scores[i], f"partial_service_name:{term}"))
-                match_found = True
-                break
-            # High priority: Service type match (REPAIR, ALTERATION, etc.)
-            elif term in service_type_lower:
-                # Enhanced service type matching with context awareness
-                if has_damage_context and "repair" in service_type_lower:
-                    # Boost repair services when damage is mentioned
-                    service_type_matches.append((row, scores[i] + 5, f"service_type:repair:{term}"))
-                elif has_damage_context and "alteration" in service_type_lower:
-                    # Lower priority for alterations when damage is mentioned
-                    service_type_matches.append((row, scores[i] - 3, f"service_type:alteration:{term}"))
-                else:
-                    service_type_matches.append((row, scores[i], f"service_type:{term}"))
-                match_found = True
-                match_details.append(f"service_type:{term}")
-            # Medium priority: Description match
-            elif term in description_lower:
-                description_matches.append((row, scores[i], f"description:{term}"))
-                match_found = True
-                match_details.append(f"description:{term}")
-            # Lower priority: Item name match
-            elif term in item_name_lower:
-                item_name_matches.append((row, scores[i], f"item_name:{term}"))
-                match_found = True
-                match_details.append(f"item_name:{term}")
-            # Lower priority: Category match
-            elif term in category_lower:
-                category_matches.append((row, scores[i], f"category:{term}"))
-                match_found = True
-                match_details.append(f"category:{term}")
-            # Lowest priority: Business type match
-            elif term in business_type_lower:
-                business_type_matches.append((row, scores[i], f"business_type:{term}"))
-                match_found = True
-                match_details.append(f"business_type:{term}")
-        
-        if not match_found:
-            semantic_only.append((row, scores[i], "semantic_only"))
+        # If no results after filtering, fall back to all semantic results
+        if len(all_results) == 0:
+            print(f"  - No {detected_service_type} results found, using all semantic candidates")
+            scores, samples = dataset.get_nearest_examples(
+                index_name="embeddings", query=query_embedding, k=100
+            )
+            all_results = pd.DataFrame(samples)
+            all_results["similarity_score"] = scores
+    else:
+        print(f"🎯 Stage 2: No service type detected, using all semantic candidates")
     
-    print(f"📊 Match breakdown:")
-    print(f"  - Exact service name matches: {len(exact_service_matches)}")
-    print(f"  - Partial service name matches: {len(partial_service_matches)}")
-    print(f"  - Service type matches: {len(service_type_matches)}")
-    print(f"  - Description matches: {len(description_matches)}")
-    print(f"  - Item name matches: {len(item_name_matches)}")
-    print(f"  - Category matches: {len(category_matches)}")
-    print(f"  - Business type matches: {len(business_type_matches)}")
-    print(f"  - Semantic only: {len(semantic_only)}")
+    # Step 4: Fuzzy and exact matching with combined scoring
+    print(f"🎯 Stage 3: Fuzzy/exact matching with combined scoring...")
     
-    # STAGE 3: Combine results with smart prioritization
-    final_results = []
-    
-    # Define match type priorities (higher number = higher priority)
-    match_type_priorities = {
-        "exact_service_name": 100,
-        "partial_service_name": 90,
-        "service_type": 80,
-        "description": 70,
-        "item_name": 60,
-        "category": 50,
-        "business_type": 40,
-        "semantic": 10
+    # Define match priorities
+    match_priorities = {
+        "exact_service_type": 100,
+        "exact_item_name": 90,
+        "exact_category": 85,
+        "exact_service_name": 80,
+        "exact_description": 75,
+        "fuzzy_service_type": 70,
+        "fuzzy_item_name": 65,
+        "fuzzy_category": 60,
+        "fuzzy_service_name": 55,
+        "fuzzy_description": 50,
+        "semantic_only": 10
     }
     
-    # Boost priorities based on context
-    if has_damage_context:
-        # Boost repair-related services when damage is mentioned
-        repair_boost = 20
-        match_type_priorities["service_type"] += repair_boost
-        print(f"🔧 Boosting repair services by {repair_boost} points")
-    
-    if has_fabric_context:
-        # Boost description matches when fabric is mentioned
-        fabric_boost = 15
-        match_type_priorities["description"] += fabric_boost
-        print(f"🧵 Boosting fabric-specific matches by {fabric_boost} points")
-    
-    # Collect all matches with their priorities
-    all_matches = []
-    
-    # Add all match groups with their priorities
-    match_groups = [
-        (exact_service_matches, "exact_service_name"),
-        (partial_service_matches, "partial_service_name"), 
-        (service_type_matches, "service_type"),
-        (description_matches, "description"),
-        (item_name_matches, "item_name"),
-        (category_matches, "category"),
-        (business_type_matches, "business_type"),
-        (semantic_only, "semantic")
-    ]
-    
-    for match_group, match_type in match_groups:
-        for row, score, match_detail in match_group:
-            # Calculate combined score: match_priority + normalized_similarity_score
-            match_priority = match_type_priorities.get(match_type, 0)
-            # Normalize similarity score to 0-1 range (assuming scores are typically 20-35)
-            normalized_score = max(0, min(1, (score - 20) / 15))  # Normalize 20-35 to 0-1
-            combined_score = match_priority + normalized_score
+    scored_results = []
+    for idx, row in all_results.iterrows():
+        best_match_type = "semantic_only"
+        best_fuzzy_score = 0
+        best_match_priority = match_priorities["semantic_only"]
+        
+        for term in search_terms:
+            service_type = str(row.get('service_type', '')).lower()
+            service_name = str(row.get('service_name', '')).lower()
+            item_name = str(row.get('item_name', '')).lower()
+            item_category = str(row.get('category', '')).lower()
+            description = str(row.get('description', '')).lower()
             
-            all_matches.append((row, score, match_detail, match_type, combined_score))
+            # Exact matches
+            if term == service_type:
+                best_match_type = "exact_service_type"
+                best_fuzzy_score = 100
+                best_match_priority = match_priorities["exact_service_type"]
+                break
+            elif term == service_name:
+                best_match_type = "exact_service_name"
+                best_fuzzy_score = 100
+                best_match_priority = match_priorities["exact_service_name"]
+                break
+            elif term == item_name:
+                if best_match_priority < match_priorities["exact_item_name"]:
+                    best_match_type = "exact_item_name"
+                    best_fuzzy_score = 100
+                    best_match_priority = match_priorities["exact_item_name"]
+            elif term == item_category:
+                if best_match_priority < match_priorities["exact_category"]:
+                    best_match_type = "exact_category"
+                    best_fuzzy_score = 100
+                    best_match_priority = match_priorities["exact_category"]
+            else: # Fuzzy matches
+                fuzzy_scores = {
+                    "fuzzy_service_type": fuzzy_match(term, service_type),
+                    "fuzzy_service_name": fuzzy_match(term, service_name),
+                    "fuzzy_item_name": fuzzy_match(term, item_name),
+                    "fuzzy_category": fuzzy_match(term, item_category),
+                    "fuzzy_description": fuzzy_match(term, description)
+                }
+                for match_type, score in fuzzy_scores.items():
+                    if score >= 85 and match_priorities[match_type] > best_match_priority:
+                        best_match_type = match_type
+                        best_fuzzy_score = score
+                        best_match_priority = match_priorities[match_type]
+        
+        # Calculate combined score
+        combined_score = calculate_combined_score(
+            semantic_score=row['similarity_score'],
+            fuzzy_score=best_fuzzy_score,
+            match_type=best_match_type,
+            match_priority=best_match_priority
+        )
+        
+        result_dict = row.to_dict()
+        result_dict.update({
+            "combined_score": combined_score,
+            "match_type": best_match_type,
+            "fuzzy_score": best_fuzzy_score,
+            "search_terms": search_terms,
+            "detected_service_type": detected_service_type
+        })
+        scored_results.append(result_dict)
     
-    # Sort by combined score (highest first)
-    all_matches.sort(key=lambda x: x[4], reverse=True)
+    # Step 5: Sort by combined score and return top 10
+    scored_results.sort(key=lambda x: x['combined_score'], reverse=True)
+    final_results = scored_results[:10]
     
-    # Take top 10 results
-    for row, score, match_detail, match_type, combined_score in all_matches[:10]:
-        row_dict = row.to_dict()
-        row_dict["similarity_score"] = float(score)
-        row_dict["match_type"] = match_type
-        row_dict["match_detail"] = match_detail
-        row_dict["search_terms"] = search_terms
-        final_results.append(row_dict)
-    
-    # Apply price filter if needed
-    if target_price:
-        price_col = config["price_column"]
-        def is_price_match(result):
-            try:
-                return abs(float(result.get(price_col, 0)) - target_price) <= 50
-            except:
-                return False
-        final_results = [r for r in final_results if is_price_match(r)]
-        print(f"💰 Price filter applied: {target_price} ± 50")
-    
-    print(f"🎯 Returning {len(final_results)} results")
+    print(f"🎯 Stage 4: Final results ({len(final_results)} items)")
     for i, result in enumerate(final_results[:5]):
-        service_name = result.get(priorities["exact_service_name"], "Unknown Service")
-        print(f"  {i+1}. {service_name} ({result['match_type']}) - Score: {result['similarity_score']:.2f}")
+        service_name = result.get('service_name', 'Unknown')
+        match_type = result.get('match_type', 'unknown')
+        combined_score = result.get('combined_score', 0)
+        print(f"  {i+1}. {service_name} ({match_type}) - Score: {combined_score:.2f}")
     
-    return final_results[:10]
+    return final_results
 
 @app.get("/dataset-config")
 def get_dataset_config():

@@ -1,0 +1,30 @@
+Dataset Analysis Summary:
+📊 Dataset Size:
+458 records (459 lines including header)
+8 columns per record
+🔍 Service Type Distribution:
+REPAIR: 299 records (65%) - Most common
+ALTERATION: 119 records (26%)
+DRY CLEANING: 36 records (8%)
+OTHER: 5 records (1%)
+📦 Item Categories:
+Shoes: 124 records (27%) - Most common
+Clothes: 114 records (25%)
+Special occasion: 71 records (15%)
+Accessories: 71 records (15%)
+Jewellery: 36 records (8%)
+Suit: 28 records (6%)
+Other textiles: 7 records (2%)
+Watch: 8 records (2%)
+�� Popular Item Names:
+Dress: 26 records
+Bunad: 49 records
+Bag: 39 records
+Boots: 36 records
+Bottom: 22 records
+Backpack: 17 records
+🔧 Popular Services:
+Change zipper: 29 records
+Hole: Multiple records (repair service)
+Attaching a purse clasp: 6 records
+Change strap: 6 records

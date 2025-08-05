@@ -132,11 +132,11 @@ def load_shared_config():
         print("⚠️  dataset.json not found. Using default configuration.")
         return {
             "search_priorities": {
-                "exact_service_name": "service_name",
-                "partial_service_name": "service_name", 
                 "service_type": "service_type",
-                "description": "description",
                 "item_name": "item_name",
+                "category":"category",
+                "service_name": "service_name",
+                "description": "description",
                 "business_type": "business_type"
             },
             "price_column": "price",
@@ -398,7 +398,7 @@ def query_fikse_search(query: str) -> List[ServiceItem]:
         for i, result in enumerate(results[:10]):
             service_item = ServiceItem(
                 id=f"service_{i+1}",
-                service=result.get(priorities["exact_service_name"], "Unknown Service"),
+                service=result.get(priorities["service_name"], "Unknown Service"),
                 description=result.get(priorities["description"], ""),
                 price=float(result.get(price_col, 0)),
                 garment_type=result.get(priorities["item_name"], ""),
@@ -476,16 +476,21 @@ def get_tone_guideline(prompt_path="Prompt"):
 def generate_order_comment(user_prompt: str, selected_services: list, ai_generator) -> str:
     print("Starting comment generation...")
     TONE_GUIDELINE = get_tone_guideline()  # Cached, loaded once
-    selected_services_text = ", ".join([s.description or s.service for s in selected_services])
+    selected_services_text = "\n".join([
+        f"{s.repairer_type} | {s.category} | {s.garment_type} | {s.service} | "
+        f"{s.service_type} | {s.description} | {s.price}"
+        for s in selected_services
+    ])
     print(f"Service descriptions: {selected_services_text}")
     
     # Use the TONE_GUIDELINE properly as instructed in the Prompt file
-    comment_prompt = f"""{TONE_GUIDELINE}
+    comment_prompt = (
+        f"{TONE_GUIDELINE.strip()}\n\n"
+        f"User: \"{user_prompt}\"\n"
+        f"Selected service(s) descriptions: \"{selected_services_text}\"\n\n"
+        f"Comment:"
+    )
 
-User: "{user_prompt}"
-Selected Service description: {selected_services_text}
-Comment:"""
-    
     try:
         print("Calling Ollama for comment...")
         llm_response = ai_generator._call_ollama(comment_prompt).strip()

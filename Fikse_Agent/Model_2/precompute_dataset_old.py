@@ -65,10 +65,6 @@ def sanitize_floats(obj):
     else:
         return obj
 
-
-
-
-
 def detect_column_mapping(df):
     """
     Automatically detect column mapping based on common patterns
@@ -96,11 +92,10 @@ def detect_column_mapping(df):
                 break
     
     # If no mapping found for required fields, use first available columns
-    required_fields = ['business_type', 'category', 'item_name', 'service_name', 'service_type', 'description', 'price']
+    required_fields = ['business_type', 'category', 'item_name', 'service_name', 'description', 'price']
     for field in required_fields:
         if field not in mapping and columns:
             mapping[field] = columns[0]  # Fallback to first column
-            print(f"⚠️  No mapping found for '{field}', using fallback: '{columns[0]}'")
     
     print(f"📊 Detected column mapping: {mapping}")
     return mapping
@@ -149,22 +144,25 @@ def save_shared_config(column_mapping, dataset_info):
             "service_type", "description", "price", "hours"
         ],
         "search_priorities": {
+            "exact_service_name": "service_name",
+            "partial_service_name": "service_name", 
             "service_type": "service_type",
-            "item_name": "item_name", 
-            "category": "category",
-            "service_name": "service_name",
             "description": "description",
-            "business_type": "business_type"
+            "item_name": "item_name",
+            "business_type": "business_type",
+            "category": "category"
         },
         "price_column": "price",
         "hours_column": "hours",
         "text_columns": ["business_type", "category", "item_name", "service_name", "service_type", "description"],
         "search_priority_order": [
+            "exact_service_name",
+            "partial_service_name", 
             "service_type",
-            "item_name", 
+            "description",
+            "item_name",
             "category",
-            "service_name",
-            "description"
+            "business_type"
         ]
     }
     
